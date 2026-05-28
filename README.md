@@ -39,7 +39,7 @@ The SDK is a 1:1 mapping of the public REST surface documented at
 
 ## Install
 
-Requires Rust 1.85 or newer.
+Requires Rust 1.86 or newer.
 
 ```toml
 [dependencies]
