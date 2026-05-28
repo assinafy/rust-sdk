@@ -1,0 +1,227 @@
+//! Document models.
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use super::assignment::{Assignment, AssignmentSigner};
+use super::tag::Tag;
+
+/// A document stored in an account.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Document {
+    /// Resource discriminator (always `"document"` when present).
+    #[serde(default)]
+    pub resource: Option<String>,
+    /// Document identifier.
+    pub id: String,
+    /// Owning account identifier.
+    #[serde(default)]
+    pub account_id: Option<String>,
+    /// If created from a template, the template identifier.
+    #[serde(default)]
+    pub template_id: Option<String>,
+    /// Display name.
+    pub name: String,
+    /// Current status. Unknown server-side values are preserved via
+    /// [`DocumentStatus::Unknown`].
+    pub status: DocumentStatus,
+    /// Downloadable artifacts keyed by name (`"original"`, `"certificated"`,
+    /// `"certificate-page"`, `"bundle"`, `"thumbnail"`, etc.).
+    #[serde(default)]
+    pub artifacts: BTreeMap<String, String>,
+    /// Pages within the document.
+    #[serde(default)]
+    pub pages: Vec<DocumentPage>,
+    /// Expanded assignment, when one exists.
+    #[serde(default)]
+    pub assignment: Option<Assignment>,
+    /// Signer represented by the current signer access code, when returned by
+    /// signer-facing document endpoints.
+    #[serde(default)]
+    pub current_signer: Option<AssignmentSigner>,
+    /// Whether the document is closed (signed, declined, expired, etc.).
+    #[serde(default)]
+    pub is_closed: bool,
+    /// Signing URL for the document (when applicable).
+    #[serde(default)]
+    pub signing_url: Option<String>,
+    /// Decline reason supplied by the signer or user, if any.
+    #[serde(default)]
+    pub decline_reason: Option<String>,
+    /// Identity of the signer or user that declined the document.
+    #[serde(default)]
+    pub declined_by: Option<DeclinedBy>,
+    /// Tags attached to the document.
+    #[serde(default)]
+    pub tags: Vec<Tag>,
+    /// Creation timestamp (ISO-8601 string or Unix epoch number).
+    #[serde(default)]
+    pub created_at: Option<serde_json::Value>,
+    /// Last-modification timestamp.
+    #[serde(default)]
+    pub updated_at: Option<serde_json::Value>,
+}
+
+/// A single page within a document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DocumentPage {
+    /// Page identifier.
+    pub id: String,
+    /// 1-based page number.
+    pub number: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Width in pixels.
+    pub width: u32,
+    /// URL to download the page as JPEG.
+    #[serde(default)]
+    pub download_url: Option<String>,
+}
+
+/// Identifies the actor that declined a document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DeclinedBy {
+    /// Identifier of the declining signer/user.
+    pub id: String,
+    /// Full name, when available.
+    #[serde(default)]
+    pub full_name: Option<String>,
+    /// Email, when available.
+    #[serde(default)]
+    pub email: Option<String>,
+}
+
+/// A downloadable artifact reference.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Artifact {
+    /// Artifact name (`"original"`, `"certificated"`, etc.).
+    pub name: String,
+    /// Pre-signed download URL.
+    pub url: String,
+}
+
+/// Well-known artifact names. Custom names are accepted via
+/// [`ArtifactName::Other`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtifactName {
+    /// Original uploaded file.
+    Original,
+    /// Final certificated PDF (signed + audit trail).
+    Certificated,
+    /// Standalone certificate page.
+    CertificatePage,
+    /// Bundle containing the certificated PDF and audit trail.
+    Bundle,
+    /// Thumbnail image.
+    Thumbnail,
+    /// Custom artifact name.
+    Other(String),
+}
+
+impl ArtifactName {
+    /// Returns the wire-format string used in URLs.
+    pub fn as_str(&self) -> &str {
+        match self {
+            ArtifactName::Original => "original",
+            ArtifactName::Certificated => "certificated",
+            ArtifactName::CertificatePage => "certificate-page",
+            ArtifactName::Bundle => "bundle",
+            ArtifactName::Thumbnail => "thumbnail",
+            ArtifactName::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for ArtifactName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ArtifactName {
+    fn from(s: &str) -> Self {
+        match s {
+            "original" => ArtifactName::Original,
+            "certificated" => ArtifactName::Certificated,
+            "certificate-page" => ArtifactName::CertificatePage,
+            "bundle" => ArtifactName::Bundle,
+            "thumbnail" => ArtifactName::Thumbnail,
+            other => ArtifactName::Other(other.to_owned()),
+        }
+    }
+}
+
+/// Document lifecycle status.
+///
+/// Unknown variants the API may add are surfaced through
+/// [`DocumentStatus::Unknown`] rather than failing deserialization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentStatus {
+    /// Upload still in progress.
+    Uploading,
+    /// Upload complete; processing has not started.
+    Uploaded,
+    /// Metadata extraction underway.
+    MetadataProcessing,
+    /// Metadata extracted; document ready to be assigned.
+    MetadataReady,
+    /// Signature deadline reached.
+    Expired,
+    /// Final certificate being generated.
+    Certificating,
+    /// Document is fully signed and certificated.
+    Certificated,
+    /// At least one signer declined.
+    RejectedBySigner,
+    /// Awaiting signatures from one or more signers.
+    PendingSignature,
+    /// Cancelled by the document owner.
+    RejectedByUser,
+    /// Processing failed.
+    Failed,
+    /// Any value the SDK does not yet model.
+    #[serde(untagged)]
+    Unknown(String),
+}
+
+impl DocumentStatus {
+    /// Returns the wire-format string.
+    pub fn as_str(&self) -> &str {
+        match self {
+            DocumentStatus::Uploading => "uploading",
+            DocumentStatus::Uploaded => "uploaded",
+            DocumentStatus::MetadataProcessing => "metadata_processing",
+            DocumentStatus::MetadataReady => "metadata_ready",
+            DocumentStatus::Expired => "expired",
+            DocumentStatus::Certificating => "certificating",
+            DocumentStatus::Certificated => "certificated",
+            DocumentStatus::RejectedBySigner => "rejected_by_signer",
+            DocumentStatus::PendingSignature => "pending_signature",
+            DocumentStatus::RejectedByUser => "rejected_by_user",
+            DocumentStatus::Failed => "failed",
+            DocumentStatus::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for DocumentStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// One entry from `GET /documents/statuses`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DocumentStatusInfo {
+    /// Status code.
+    pub code: DocumentStatus,
+    /// Whether documents in this status may be deleted.
+    pub deletable: bool,
+}

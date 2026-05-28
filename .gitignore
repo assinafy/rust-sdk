@@ -1,0 +1,8 @@
+/target
+Cargo.lock
+.env
+.env.local
+*.pdf
+!tests/fixtures/*.pdf
+!examples/fixtures/*.pdf
+.DS_Store

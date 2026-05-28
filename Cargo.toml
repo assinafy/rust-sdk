@@ -1,0 +1,65 @@
+[package]
+name = "assinafy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Idiomatic async Rust SDK for the Assinafy electronic signature API (https://api.assinafy.com.br/v1)."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/assinafy/assinafy-sdk"
+homepage = "https://assinafy.com.br"
+documentation = "https://docs.rs/assinafy"
+readme = "README.md"
+keywords = ["assinafy", "signature", "esign", "api", "sdk"]
+categories = ["api-bindings", "web-programming::http-client"]
+
+[features]
+default = ["rustls-tls"]
+# Use rustls for TLS (pure-Rust, recommended).
+rustls-tls = ["reqwest/rustls"]
+# Use the OS-native TLS stack instead of rustls.
+native-tls = ["reqwest/native-tls"]
+
+[dependencies]
+bytes = "1"
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "multipart",
+    "query",
+    "stream",
+    "gzip",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs"] }
+url = "2"
+
+[dev-dependencies]
+dotenvy = "0.15"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "time"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[[example]]
+name = "list_signers"
+path = "examples/list_signers.rs"
+
+[[example]]
+name = "create_signer"
+path = "examples/create_signer.rs"
+
+[[example]]
+name = "upload_document"
+path = "examples/upload_document.rs"
+
+[[example]]
+name = "create_assignment"
+path = "examples/create_assignment.rs"
+
+[[example]]
+name = "tags_workflow"
+path = "examples/tags_workflow.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
