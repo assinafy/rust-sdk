@@ -285,8 +285,6 @@ The `--ignored` flag is required because these tests hit the live sandbox, and
 schedule when the `ASSINAFY_API_KEY` and `ASSINAFY_ACCOUNT_ID` repository
 secrets are configured (they skip themselves when the secrets are absent).
 
-See [`AUDIT.md`](AUDIT.md) for the endpoint coverage and verification audit.
-
 ## License
 
 Dual-licensed under MIT or Apache-2.0 at your option.
