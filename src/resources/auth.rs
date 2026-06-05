@@ -31,24 +31,22 @@ impl LoginBody {
 }
 
 /// `POST /authentication/social-login` request body.
-///
-/// The exact shape of `token` depends on the social provider. Provide it as a
-/// JSON value so the SDK does not have to track every provider's contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocialLoginBody {
-    /// Provider identifier (e.g. `"google"`, `"apple"`).
+    /// Provider identifier. Currently only `"google"` is supported.
     pub provider: String,
-    /// Provider-specific token payload.
-    pub token: serde_json::Value,
+    /// The access token or ID token obtained from the social-login provider.
+    pub token: String,
     /// Whether the user accepted Assinafy's terms during the provider flow.
     pub has_accepted_terms: bool,
 }
 
 impl SocialLoginBody {
     /// Build a social-login request.
-    pub fn new<P>(provider: P, token: impl Into<serde_json::Value>, accepted_terms: bool) -> Self
+    pub fn new<P, T>(provider: P, token: T, accepted_terms: bool) -> Self
     where
         P: Into<String>,
+        T: Into<String>,
     {
         Self {
             provider: provider.into(),
@@ -58,7 +56,7 @@ impl SocialLoginBody {
     }
 
     /// Build a Google social-login request.
-    pub fn google(token: impl Into<serde_json::Value>, accepted_terms: bool) -> Self {
+    pub fn google<T: Into<String>>(token: T, accepted_terms: bool) -> Self {
         Self::new("google", token, accepted_terms)
     }
 }

@@ -1,0 +1,31 @@
+name: Sandbox
+
+# Live integration tests against the Assinafy sandbox API. These are #[ignore]
+# by default and only run here. They require the repository secrets
+# ASSINAFY_API_KEY and ASSINAFY_ACCOUNT_ID; when those are absent the tests skip
+# themselves gracefully (so forks and unconfigured repos stay green).
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: sandbox
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sandbox:
+    name: sandbox integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run sandbox integration tests
+        env:
+          ASSINAFY_API_KEY: ${{ secrets.ASSINAFY_API_KEY }}
+          ASSINAFY_ACCOUNT_ID: ${{ secrets.ASSINAFY_ACCOUNT_ID }}
+        run: cargo test --test sandbox --locked -- --ignored --test-threads=1

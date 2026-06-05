@@ -197,7 +197,9 @@ impl<'a> WebhooksApi<'a> {
 
     /// Delete the current webhook subscription.
     ///
-    /// `DELETE /accounts/{account_id}/webhooks/subscriptions`.
+    /// `DELETE /accounts/{account_id}/webhooks/subscriptions`. The API echoes
+    /// the deleted subscription object; it is discarded here. Use
+    /// [`get_subscription`](Self::get_subscription) beforehand if you need it.
     pub async fn delete_subscription(&self) -> Result<()> {
         let path = format!("accounts/{}/webhooks/subscriptions", self.account_id);
         let req = self.http.request(Method::DELETE, &path)?;

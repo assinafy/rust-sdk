@@ -225,3 +225,65 @@ pub struct DocumentStatusInfo {
     /// Whether documents in this status may be deleted.
     pub deletable: bool,
 }
+
+/// Result of `GET /documents/{signature_hash}/verify`.
+///
+/// When the hash is not found (or the document is not signed), [`is_valid`] is
+/// `false` and the descriptive fields are `None`. Note that the API returns
+/// `page_count` and `signer_count` as **strings** (e.g. `"1"`).
+///
+/// [`is_valid`]: DocumentVerification::is_valid
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DocumentVerification {
+    /// The signature hash that was looked up (echoed back).
+    #[serde(default)]
+    pub hash: Option<String>,
+    /// Document identifier, when the hash resolves to a certificated document.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Document status, when found.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Page count as reported by the API (a string such as `"1"`), when found.
+    #[serde(default)]
+    pub page_count: Option<String>,
+    /// Signer count as reported by the API (a string such as `"1"`), when found.
+    #[serde(default)]
+    pub signer_count: Option<String>,
+    /// Number of signers that have completed signing, when found.
+    #[serde(default)]
+    pub completed_count: Option<u32>,
+    /// Completion timestamp (ISO-8601), when found.
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    /// Timestamp the verification was performed (ISO-8601).
+    #[serde(default)]
+    pub verified_at: Option<String>,
+    /// Whether the document is a valid, signed Assinafy document.
+    pub is_valid: bool,
+    /// Human-readable detail. Empty on success; explains the failure otherwise.
+    #[serde(default)]
+    pub message: String,
+}
+
+/// Public, unauthenticated view of a document returned by
+/// `GET /public/documents/{document_id}` and embedded in
+/// [`SendTokenResult`](crate::resources::SendTokenResult).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct PublicDocument {
+    /// Resource discriminator (always `"document"` when present).
+    #[serde(default)]
+    pub resource: Option<String>,
+    /// Document identifier.
+    pub id: String,
+    /// Document file name.
+    pub name: String,
+    /// Page count as reported by the API (a string such as `"1"`).
+    #[serde(default)]
+    pub page_count: Option<String>,
+    /// Display name of the user that created the document.
+    #[serde(default)]
+    pub created_by: Option<String>,
+}

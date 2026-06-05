@@ -8,7 +8,7 @@ use reqwest::multipart::{Form, Part};
 
 use crate::error::{Error, Result};
 use crate::http::HttpClient;
-use crate::models::{ArtifactName, Document, DocumentStatusInfo};
+use crate::models::{ArtifactName, Document, DocumentStatusInfo, DocumentVerification};
 use crate::pagination::Page;
 
 /// Builder for `GET /accounts/{account_id}/documents`.
@@ -228,13 +228,7 @@ impl<'a> DocumentsApi<'a> {
             artifact.as_str()
         );
         let req = self.http.request(Method::GET, &path)?;
-        let (bytes, headers) = self.http.send_bytes(req).await?;
-        let content_type = headers
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        Ok((bytes, content_type))
+        self.http.send_download(req).await
     }
 
     /// Download the preview thumbnail (PNG or JPEG bytes).
@@ -246,13 +240,7 @@ impl<'a> DocumentsApi<'a> {
     ) -> Result<(Bytes, String)> {
         let path = format!("documents/{}/thumbnail", document_id.as_ref());
         let req = self.http.request(Method::GET, &path)?;
-        let (bytes, headers) = self.http.send_bytes(req).await?;
-        let content_type = headers
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        Ok((bytes, content_type))
+        self.http.send_download(req).await
     }
 
     /// Download a single document page as JPEG.
@@ -269,19 +257,15 @@ impl<'a> DocumentsApi<'a> {
             page_id.as_ref()
         );
         let req = self.http.request(Method::GET, &path)?;
-        let (bytes, headers) = self.http.send_bytes(req).await?;
-        let content_type = headers
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        Ok((bytes, content_type))
+        self.http.send_download(req).await
     }
 
     /// Verify the authenticity of a document by its signature hash.
     ///
     /// `GET /documents/{signature_hash}/verify`. Requires no authentication.
-    pub async fn verify<S: AsRef<str>>(&self, signature_hash: S) -> Result<serde_json::Value> {
+    /// When the hash is unknown the call still succeeds with
+    /// [`DocumentVerification::is_valid`] set to `false`.
+    pub async fn verify<S: AsRef<str>>(&self, signature_hash: S) -> Result<DocumentVerification> {
         let path = format!("documents/{}/verify", signature_hash.as_ref());
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await

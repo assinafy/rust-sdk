@@ -34,6 +34,7 @@ pub use assignment::{
 pub use cost::{BlockingReason, CostBreakdownItem, CostEstimate};
 pub use document::{
     Artifact, ArtifactName, DeclinedBy, Document, DocumentPage, DocumentStatus, DocumentStatusInfo,
+    DocumentVerification, PublicDocument,
 };
 pub use field::{FieldDefinition, FieldType, FieldValidationResult};
 pub use signer::{Signer, SignerSelf, SignerType};

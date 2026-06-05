@@ -10,9 +10,9 @@ use crate::pagination::Page;
 
 /// Body for `POST /accounts/{account_id}/signers`.
 ///
-/// At least one of `email` or `whatsapp_phone_number` is required by the API
-/// for signers that will receive notifications, though either may be omitted
-/// for `Collect` (in-person) flows.
+/// Only `full_name` is required by the API. `email` and `whatsapp_phone_number`
+/// are optional, but a signer needs at least one of them to be notified or
+/// verified through that channel.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateSignerBody {
     /// Full legal name.
@@ -50,14 +50,17 @@ impl CreateSignerBody {
 
 /// Body for `PUT /accounts/{account_id}/signers/{signer_id}`. Any omitted
 /// field is left unchanged server-side.
+///
+/// `full_name` can always be updated. Updating `email` or
+/// `whatsapp_phone_number` may return `400 Bad Request` if the signer has
+/// unverified, in-flight documents that use that verification channel; the
+/// error message names the offending document(s).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateSignerBody {
     /// New full name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_name: Option<String>,
-    /// New email address. Pass `Some(String::new())` is **not** the way to
-    /// clear it — most fields cannot be nulled via this endpoint; check the
-    /// API reference if you need to remove a value.
+    /// New email address.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     /// New WhatsApp phone number.

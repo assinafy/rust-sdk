@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::http::HttpClient;
 use crate::models::{FieldDefinition, FieldType, FieldValidationResult};
-use crate::pagination::Page;
 
 /// Body for `POST /accounts/{account_id}/fields`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,72 +144,38 @@ impl ValidateFieldEntry {
 }
 
 /// Builder for `GET /accounts/{account_id}/fields`.
+///
+/// This endpoint is **not** paginated — it returns every field definition in a
+/// single flat array — so the builder only exposes the documented
+/// `include_inactive` / `include_standard` toggles and [`send`](Self::send)
+/// returns a plain [`Vec`].
 #[derive(Debug)]
 pub struct ListFieldsRequest<'a> {
     http: &'a HttpClient,
     account_id: &'a str,
-    page: Option<u32>,
-    per_page: Option<u32>,
-    search: Option<String>,
-    sort: Option<String>,
     include_inactive: Option<bool>,
     include_standard: Option<bool>,
 }
 
 impl<'a> ListFieldsRequest<'a> {
-    /// 1-based page number.
-    pub fn page(mut self, page: u32) -> Self {
-        self.page = Some(page);
-        self
-    }
-
-    /// Results per page.
-    pub fn per_page(mut self, per_page: u32) -> Self {
-        self.per_page = Some(per_page);
-        self
-    }
-
-    /// Free-text search term.
-    pub fn search<S: Into<String>>(mut self, search: S) -> Self {
-        self.search = Some(search.into());
-        self
-    }
-
-    /// Sort expression.
-    pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
-        self.sort = Some(sort.into());
-        self
-    }
-
     /// Include inactive field definitions.
     pub fn include_inactive(mut self, value: bool) -> Self {
         self.include_inactive = Some(value);
         self
     }
 
-    /// Include standard built-in definitions.
+    /// Include standard built-in definitions (e.g. `signature`, `initial`,
+    /// `signatureDate`).
     pub fn include_standard(mut self, value: bool) -> Self {
         self.include_standard = Some(value);
         self
     }
 
     /// Execute the request.
-    pub async fn send(self) -> Result<Page<FieldDefinition>> {
+    pub async fn send(self) -> Result<Vec<FieldDefinition>> {
         let path = format!("accounts/{}/fields", self.account_id);
         let mut req = self.http.request(Method::GET, &path)?;
         let mut q: Vec<(&str, String)> = Vec::new();
-        if let Some(v) = self.page {
-            q.push(("page", v.to_string()));
-        }
-        if let Some(v) = self.per_page {
-            q.push(("per-page", v.to_string()));
-        }
-        if let Some(v) = self.search {
-            q.push(("search", v));
-        }
-        if let Some(v) = self.sort {
-            q.push(("sort", v));
-        }
         if let Some(v) = self.include_inactive {
             q.push(("include_inactive", v.to_string()));
         }
@@ -220,7 +185,7 @@ impl<'a> ListFieldsRequest<'a> {
         if !q.is_empty() {
             req = req.query(&q);
         }
-        self.http.send_paged(req).await
+        self.http.send_envelope(req).await
     }
 }
 
@@ -247,15 +212,12 @@ impl<'a> FieldsApi<'a> {
 
     /// List field definitions.
     ///
-    /// `GET /accounts/{account_id}/fields`.
+    /// `GET /accounts/{account_id}/fields`. Returns every definition in one
+    /// response (the endpoint is not paginated).
     pub fn list(&self) -> ListFieldsRequest<'_> {
         ListFieldsRequest {
             http: self.http,
             account_id: &self.account_id,
-            page: None,
-            per_page: None,
-            search: None,
-            sort: None,
             include_inactive: None,
             include_standard: None,
         }
@@ -294,7 +256,11 @@ impl<'a> FieldsApi<'a> {
 
     /// Validate a value against one field definition.
     ///
-    /// `POST /accounts/{account_id}/fields/{field_id}/validate`.
+    /// `POST /accounts/{account_id}/fields/{field_id}/validate`. Works in both
+    /// the authenticated-user context (API key / bearer) and the signer
+    /// context — for the latter, build the client with
+    /// [`Auth::AccessCode`](crate::Auth::AccessCode) and the
+    /// `signer-access-code` query parameter is sent automatically.
     pub async fn validate<S: AsRef<str>>(
         &self,
         field_id: S,

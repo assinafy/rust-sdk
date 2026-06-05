@@ -13,7 +13,10 @@ pub struct Tag {
     pub id: String,
     /// Display name. Unique per workspace (case-insensitive).
     pub name: String,
-    /// 6-character hex color (no leading `#`).
+    /// 6-character hex color, optionally with a leading `#` (the standalone
+    /// tag endpoints return it without `#`, e.g. `"ff8800"`, while inline
+    /// document/template tags may include it, e.g. `"#FF0000"`). `None` when
+    /// no color is set.
     #[serde(default)]
     pub color: Option<String>,
     /// ISO-8601 creation timestamp.

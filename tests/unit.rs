@@ -295,3 +295,95 @@ fn template_default_document_tag_can_include_color() {
     .unwrap();
     assert_eq!(tag.color.as_deref(), Some("ff8800"));
 }
+
+#[test]
+fn api_error_decodes_route_not_found_shape() {
+    // The API returns two distinct 404 bodies: a resource-404 with a `data`
+    // field, and this route-not-found shape (extra `name`/`code`, no `data`).
+    // `ApiError::data` relies on `#[serde(default)]` to decode the latter.
+    let body = r#"{"name":"Not Found","message":"Página não encontrada.","code":0,"status":404}"#;
+    let err: assinafy::ApiError = serde_json::from_str(body).unwrap();
+    assert_eq!(err.status, 404);
+    assert_eq!(err.message, "Página não encontrada.");
+    assert!(err.data.is_null());
+}
+
+#[test]
+fn document_verification_decodes_string_counts_for_valid_and_invalid() {
+    use assinafy::models::DocumentVerification;
+
+    let invalid = r#"{"hash":"INVALID","id":null,"status":null,"page_count":null,
+        "signer_count":null,"completed_count":null,"completed_at":null,
+        "verified_at":"2026-06-05T20:53:51Z","is_valid":false,
+        "message":"Document not signed or not found."}"#;
+    let v: DocumentVerification = serde_json::from_str(invalid).unwrap();
+    assert!(!v.is_valid);
+    assert_eq!(v.hash.as_deref(), Some("INVALID"));
+    assert_eq!(v.page_count, None);
+
+    // The API reports page_count / signer_count as STRINGS.
+    let valid = r#"{"hash":"FE32","id":"63ddb172","status":"certificated",
+        "page_count":"1","signer_count":"1","completed_count":1,
+        "completed_at":"2023-01-27T19:27:44Z","verified_at":"2023-01-27T19:27:46Z",
+        "is_valid":true,"message":""}"#;
+    let v: DocumentVerification = serde_json::from_str(valid).unwrap();
+    assert!(v.is_valid);
+    assert_eq!(v.page_count.as_deref(), Some("1"));
+    assert_eq!(v.signer_count.as_deref(), Some("1"));
+    assert_eq!(v.completed_count, Some(1));
+}
+
+#[test]
+fn public_document_decodes_with_string_page_count() {
+    use assinafy::models::PublicDocument;
+    let body = r#"{"resource":"document","id":"doc1","name":"1.pdf","page_count":"1","created_by":"John Smith"}"#;
+    let d: PublicDocument = serde_json::from_str(body).unwrap();
+    assert_eq!(d.id, "doc1");
+    assert_eq!(d.name, "1.pdf");
+    assert_eq!(d.page_count.as_deref(), Some("1"));
+    assert_eq!(d.created_by.as_deref(), Some("John Smith"));
+}
+
+#[test]
+fn editor_field_serializes_documented_shape() {
+    use assinafy::resources::EditorField;
+    let json = serde_json::to_value(EditorField::new("field_1", "hello")).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "field_id": "field_1", "value": "hello" })
+    );
+}
+
+#[test]
+fn assignment_body_omits_undocumented_top_level_methods() {
+    // Top-level verification_method/notification_methods were removed because
+    // the server silently ignores them (only the per-signer fields work).
+    let json =
+        serde_json::to_value(CreateAssignmentBody::new(AssignmentMethod::Virtual, ["s1"])).unwrap();
+    assert!(json.get("verification_method").is_none());
+    assert!(json.get("notification_methods").is_none());
+}
+
+#[test]
+fn template_document_body_serializes_only_documented_fields() {
+    use assinafy::resources::{
+        CreateDocumentFromTemplateBody, EditorField, TemplateDocumentSigner,
+    };
+    let json = serde_json::to_value(
+        CreateDocumentFromTemplateBody::default()
+            .expires_at("2024-07-30T23:59:00Z")
+            .signers(vec![TemplateDocumentSigner::existing("role_1", "signer_1")])
+            .editor_fields(vec![EditorField::new("f1", "v1")])
+            .tags(["Contracts"]),
+    )
+    .unwrap();
+    assert_eq!(json["expires_at"], "2024-07-30T23:59:00Z");
+    assert_eq!(
+        json["editor_fields"],
+        serde_json::json!([{ "field_id": "f1", "value": "v1" }])
+    );
+    assert_eq!(json["tags"], serde_json::json!(["Contracts"]));
+    // Undocumented fields must not be emitted.
+    assert!(json.get("expiration").is_none());
+    assert!(json.get("tag_ids").is_none());
+}

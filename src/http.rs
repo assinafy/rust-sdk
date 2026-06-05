@@ -120,9 +120,9 @@ impl HttpClient {
         Ok(Page { data, meta })
     }
 
-    /// Perform a request and return the raw response body bytes (e.g. for
-    /// downloading PDF artifacts). Errors are still decoded from any JSON
-    /// envelope the server returns on failure.
+    /// Perform a request and return the raw response body bytes plus the
+    /// response headers (e.g. for downloading PDF artifacts). Errors are still
+    /// decoded from any JSON envelope the server returns on failure.
     pub(crate) async fn send_bytes(
         &self,
         req: RequestBuilder,
@@ -131,22 +131,50 @@ impl HttpClient {
         let status = res.status();
         let headers = res.headers().clone();
         let body = res.bytes().await?;
-        if !status.is_success() {
-            return Err(map_error(status, &body));
-        }
+        ensure_success(status, &body)?;
         Ok((body, headers))
     }
 
-    /// Perform a request expected to return no body (e.g. DELETE/PUT 204).
+    /// Perform a request that returns a binary artifact, and return its bytes
+    /// alongside the response `Content-Type` (defaulting to
+    /// `application/octet-stream` when the header is absent).
+    pub(crate) async fn send_download(
+        &self,
+        req: RequestBuilder,
+    ) -> Result<(bytes::Bytes, String)> {
+        let (bytes, headers) = self.send_bytes(req).await?;
+        Ok((bytes, content_type_of(&headers)))
+    }
+
+    /// Perform a request expected to return no meaningful body. Tolerates both
+    /// an empty `204` response and a `200` envelope (`{ status, message, data }`)
+    /// whose payload is discarded.
     pub(crate) async fn send_no_content(&self, req: RequestBuilder) -> Result<()> {
         let res = req.send().await?;
         let status = res.status();
         let body = res.bytes().await?;
-        if !status.is_success() {
-            return Err(map_error(status, &body));
-        }
-        Ok(())
+        ensure_success(status, &body)
     }
+}
+
+/// Returns `Ok(())` for 2xx responses, otherwise maps the body into an
+/// [`Error::Api`]. Centralises the success check shared by every send path.
+fn ensure_success(status: StatusCode, body: &[u8]) -> Result<()> {
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(map_error(status, body))
+    }
+}
+
+/// Extracts the response `Content-Type`, falling back to
+/// `application/octet-stream` when absent or non-UTF-8.
+fn content_type_of(headers: &HeaderMap) -> String {
+    headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_owned()
 }
 
 async fn take_response(res: Response) -> Result<(StatusCode, HeaderMap, bytes::Bytes)> {
@@ -161,9 +189,7 @@ fn decode_envelope<T: DeserializeOwned>(
     _headers: &HeaderMap,
     body: &[u8],
 ) -> Result<T> {
-    if !status.is_success() {
-        return Err(map_error(status, body));
-    }
+    ensure_success(status, body)?;
     if body.is_empty() {
         // Some PUT endpoints respond 200 with no body; only types that
         // accept `()` survive this branch.

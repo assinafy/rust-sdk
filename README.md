@@ -43,7 +43,7 @@ Requires Rust 1.86 or newer.
 
 ```toml
 [dependencies]
-assinafy = "0.1"
+assinafy = "1"
 tokio    = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -276,11 +276,14 @@ Use [`ClientBuilder::sandbox`] to target the public sandbox at
 ```bash
 export ASSINAFY_API_KEY=<sandbox-key>
 export ASSINAFY_ACCOUNT_ID=<sandbox-account>
-cargo test --test sandbox -- --ignored
+cargo test --test sandbox -- --ignored --test-threads=1
 ```
 
-The `--ignored` flag is required because the tests hit the live sandbox; CI
-runs them on a schedule.
+The `--ignored` flag is required because these tests hit the live sandbox, and
+`--test-threads=1` keeps the shared workspace state consistent. The
+[`Sandbox` workflow](.github/workflows/sandbox.yml) runs them on a daily
+schedule when the `ASSINAFY_API_KEY` and `ASSINAFY_ACCOUNT_ID` repository
+secrets are configured (they skip themselves when the secrets are absent).
 
 See [`AUDIT.md`](AUDIT.md) for the endpoint coverage and verification audit.
 

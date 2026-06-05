@@ -5,3 +5,4 @@
 !tests/fixtures/*.pdf
 !examples/fixtures/*.pdf
 .DS_Store
+.audit/

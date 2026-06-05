@@ -96,12 +96,6 @@ pub struct CreateAssignmentBody {
     /// Optional expiration timestamp (ISO-8601).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
-    /// Default verification method when no per-signer override is set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verification_method: Option<VerificationMethod>,
-    /// Default notification methods when no per-signer override is set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub notification_methods: Option<Vec<NotificationMethod>>,
     /// Optional list of copy-receivers (IDs of signers that only receive
     /// the final certificated copy).
     #[serde(
@@ -144,8 +138,6 @@ impl CreateAssignmentBody {
             message: None,
             expiration: None,
             expires_at: None,
-            verification_method: None,
-            notification_methods: None,
             copy_receiver_ids: Vec::new(),
         }
     }
@@ -200,18 +192,6 @@ impl CreateAssignmentBody {
     /// Set collect-assignment entries.
     pub fn entries(mut self, entries: Vec<AssignmentEntry>) -> Self {
         self.entries = entries;
-        self
-    }
-
-    /// Default verification method.
-    pub fn verification_method(mut self, method: VerificationMethod) -> Self {
-        self.verification_method = Some(method);
-        self
-    }
-
-    /// Default notification methods.
-    pub fn notification_methods(mut self, methods: Vec<NotificationMethod>) -> Self {
-        self.notification_methods = Some(methods);
         self
     }
 
@@ -345,24 +325,7 @@ impl<'a> AssignmentsApi<'a> {
         self.http.send_envelope(req).await
     }
 
-    /// Re-send notifications to the assignment's outstanding signers.
-    ///
-    /// `PUT /documents/{document_id}/assignments/{assignmentId}/resend`.
-    pub async fn resend<D: AsRef<str>, A: AsRef<str>>(
-        &self,
-        document_id: D,
-        assignment_id: A,
-    ) -> Result<Assignment> {
-        let path = format!(
-            "documents/{}/assignments/{}/resend",
-            document_id.as_ref(),
-            assignment_id.as_ref()
-        );
-        let req = self.http.request(Method::PUT, &path)?;
-        self.http.send_envelope(req).await
-    }
-
-    /// Re-send notifications to a specific signer.
+    /// Re-send the signature-request notification to a specific signer.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/resend`.
     pub async fn resend_to_signer<D: AsRef<str>, A: AsRef<str>, S: AsRef<str>>(

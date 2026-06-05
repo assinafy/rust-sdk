@@ -48,7 +48,7 @@ pub use signer_self::{
 pub use signers::{CreateSignerBody, ListSignersRequest, SignersApi, UpdateSignerBody};
 pub use tags::{CreateTagBody, ListTagsRequest, TagsApi, UpdateTagBody};
 pub use templates::{
-    CreateDocumentFromTemplateBody, EstimateTemplateCostBody, ListTemplatesRequest,
+    CreateDocumentFromTemplateBody, EditorField, EstimateTemplateCostBody, ListTemplatesRequest,
     TemplateDocumentSigner, TemplateRoleBinding, TemplatesApi,
 };
 pub use webhooks::{ListWebhookDispatchesRequest, RegisterWebhookBody, WebhooksApi};

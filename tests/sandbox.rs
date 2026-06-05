@@ -136,11 +136,10 @@ async fn read_only_reference_endpoints_are_available() {
         "expected email field type in {field_types:?}"
     );
 
-    let _fields_page = client
+    let _fields = client
         .fields(&account_id)
         .list()
         .include_standard(true)
-        .per_page(5)
         .send()
         .await
         .expect("list fields");
@@ -221,13 +220,8 @@ async fn fields_full_lifecycle() {
         .expect("update field");
     assert_eq!(updated.name, new_name);
 
-    let page = fields
-        .list()
-        .search(&new_name)
-        .send()
-        .await
-        .expect("list fields");
-    assert!(page.data.iter().any(|field| field.id == created.id));
+    let all = fields.list().send().await.expect("list fields");
+    assert!(all.iter().any(|field| field.id == created.id));
 
     fields.delete(&created.id).await.expect("delete field");
 }
@@ -334,6 +328,52 @@ async fn upload_document_then_delete() {
         .delete(&doc.id)
         .await
         .expect("delete uploaded document");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn verify_unknown_hash_returns_invalid_typed_result() {
+    let (client, _) = sandbox_or_skip!();
+    let result = client
+        .documents()
+        .verify("INVALIDHASHEXAMPLE")
+        .await
+        .expect("verify endpoint");
+    assert!(
+        !result.is_valid,
+        "an unknown hash must not verify: {result:?}"
+    );
+    assert!(
+        result.id.is_none(),
+        "unknown hash should have no document id"
+    );
+    assert!(
+        result.verified_at.is_some(),
+        "verified_at is always returned"
+    );
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn public_document_info_is_typed() {
+    use assinafy::resources::ListDocumentsRequest;
+    let (client, account_id) = sandbox_or_skip!();
+    let page = client
+        .documents()
+        .list(&account_id, ListDocumentsRequest::default().per_page(1))
+        .await
+        .expect("list documents");
+    let Some(doc) = page.data.first() else {
+        eprintln!("skipping: no documents in sandbox account to query publicly");
+        return;
+    };
+    let public = client
+        .public()
+        .document(&doc.id)
+        .await
+        .expect("public document info");
+    assert_eq!(public.id, doc.id);
+    assert!(!public.name.is_empty(), "public document has a name");
 }
 
 /// A 1-page valid PDF used to exercise the upload endpoint without bundling a

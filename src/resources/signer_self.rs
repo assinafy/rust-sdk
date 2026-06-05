@@ -394,13 +394,7 @@ impl<'a> SignerSelfApi<'a> {
             artifact.as_str()
         );
         let req = self.http.request(Method::GET, &path)?;
-        let (bytes, headers) = self.http.send_bytes(req).await?;
-        let content_type = headers
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        Ok((bytes, content_type))
+        self.http.send_download(req).await
     }
 
     /// Upload a signature or initial image.
@@ -429,12 +423,6 @@ impl<'a> SignerSelfApi<'a> {
     pub async fn download_signature(&self, kind: SignerType) -> Result<(Bytes, String)> {
         let path = format!("signature/{}", kind.as_str());
         let req = self.http.request(Method::GET, &path)?;
-        let (bytes, headers) = self.http.send_bytes(req).await?;
-        let content_type = headers
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        Ok((bytes, content_type))
+        self.http.send_download(req).await
     }
 }

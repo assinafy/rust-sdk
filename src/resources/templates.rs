@@ -209,6 +209,28 @@ impl TemplateDocumentSigner {
 /// Backward-compatible alias for older role-binding terminology.
 pub type TemplateRoleBinding = TemplateDocumentSigner;
 
+/// A single editor-filled field value supplied when creating a document from a
+/// template (`editor_fields[]`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditorField {
+    /// Field identifier, matching the `field_id` of an editor field on the
+    /// template.
+    pub field_id: String,
+    /// Value to assign to the field. Usually a string, but the API accepts any
+    /// JSON scalar.
+    pub value: serde_json::Value,
+}
+
+impl EditorField {
+    /// Build an editor field value.
+    pub fn new<F: Into<String>>(field_id: F, value: impl Into<serde_json::Value>) -> Self {
+        Self {
+            field_id: field_id.into(),
+            value: value.into(),
+        }
+    }
+}
+
 /// Body for `POST /accounts/{account_id}/templates/{template_id}/documents`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateDocumentFromTemplateBody {
@@ -218,24 +240,21 @@ pub struct CreateDocumentFromTemplateBody {
     /// Optional invitation message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// Optional expiration timestamp.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expiration: Option<String>,
-    /// Optional expiration timestamp in ISO 8601 format.
+    /// Optional expiration timestamp in ISO 8601 format. By default the
+    /// document does not expire.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
-    /// Role → signer bindings.
+    /// Role → signer bindings (one entry per template role).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub signers: Vec<TemplateDocumentSigner>,
     /// Editor-filled field values.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub editor_fields: Vec<serde_json::Value>,
-    /// Tags to apply by name or identifier, as accepted by the API.
+    pub editor_fields: Vec<EditorField>,
+    /// Tag names to attach to the generated document. Names that do not exist
+    /// yet are auto-created; the template's default-document-tags are always
+    /// applied and merged on top.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub tags: Vec<String>,
-    /// Additional tag IDs to apply to the new document.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub tag_ids: Vec<String>,
 }
 
 impl CreateDocumentFromTemplateBody {
@@ -251,13 +270,8 @@ impl CreateDocumentFromTemplateBody {
         self
     }
 
-    /// Set the expiration timestamp.
-    pub fn expiration<S: Into<String>>(mut self, expiration: S) -> Self {
-        self.expiration = Some(expiration.into());
-        self
-    }
-
-    /// Set the expiration timestamp in the documented `expires_at` field.
+    /// Set the expiration timestamp (ISO 8601, the documented `expires_at`
+    /// field).
     pub fn expires_at<S: Into<String>>(mut self, expires_at: S) -> Self {
         self.expires_at = Some(expires_at.into());
         self
@@ -276,28 +290,21 @@ impl CreateDocumentFromTemplateBody {
     }
 
     /// Set editor-filled field values.
-    pub fn editor_fields(mut self, fields: Vec<serde_json::Value>) -> Self {
-        self.editor_fields = fields;
+    pub fn editor_fields<I>(mut self, fields: I) -> Self
+    where
+        I: IntoIterator<Item = EditorField>,
+    {
+        self.editor_fields = fields.into_iter().collect();
         self
     }
 
-    /// Set the tags to apply to the generated document.
+    /// Set the tag names to apply to the generated document.
     pub fn tags<I, S>(mut self, tags: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
         self.tags = tags.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Set additional tag IDs using the legacy `tag_ids` request field.
-    pub fn tag_ids<I, S>(mut self, tags: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.tag_ids = tags.into_iter().map(Into::into).collect();
         self
     }
 }
@@ -397,13 +404,7 @@ impl<'a> TemplatesApi<'a> {
             page_id.as_ref()
         );
         let req = self.http.request(Method::GET, &path)?;
-        let (bytes, headers) = self.http.send_bytes(req).await?;
-        let content_type = headers
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_owned();
-        Ok((bytes, content_type))
+        self.http.send_download(req).await
     }
 
     /// Create a document from a template.
