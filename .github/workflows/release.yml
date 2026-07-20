@@ -5,6 +5,16 @@ on:
     tags:
       - "v*"
 
+# Only ever run one publish per tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least privilege: publishing authenticates to crates.io via CARGO_REGISTRY_TOKEN,
+# so the workflow itself only needs read access to the repository.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

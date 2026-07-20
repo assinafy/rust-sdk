@@ -13,6 +13,7 @@
 //! # Ok(()) }
 //! ```
 
+mod accounts;
 mod activities;
 mod api_keys;
 mod assignments;
@@ -26,17 +27,23 @@ mod tags;
 mod templates;
 mod webhooks;
 
+pub use accounts::{
+    AccountApi, AccountsApi, CreateAccountBody, NotificationSenderType, UpdateAccountBody,
+    UploadLogoRequest,
+};
 pub use activities::ActivitiesApi;
 pub use api_keys::{ApiKeyResponse, ApiKeysApi, CreateApiKeyBody};
 pub use assignments::{
     AssignmentEntry, AssignmentField, AssignmentsApi, CreateAssignmentBody, CreateAssignmentSigner,
-    EstimateAssignmentCostBody,
+    EstimateAssignmentCostBody, ListAssignmentsRequest,
 };
 pub use auth::{
-    AuthApi, ChangePasswordBody, LoginBody, RequestPasswordResetBody, ResetPasswordBody,
-    SocialLoginBody,
+    AuthApi, ChangePasswordBody, LinkSocialLoginBody, LoginBody, RequestPasswordResetBody,
+    ResetPasswordBody, SocialLoginBody,
 };
-pub use documents::{DocumentsApi, ListDocumentsRequest, UploadDocumentRequest};
+pub use documents::{
+    DocumentsApi, ListDocumentsRequest, SearchDocumentsRequest, UploadDocumentRequest,
+};
 pub use fields::{
     CreateFieldBody, FieldsApi, ListFieldsRequest, UpdateFieldBody, ValidateFieldEntry,
 };
@@ -48,7 +55,7 @@ pub use signer_self::{
 pub use signers::{CreateSignerBody, ListSignersRequest, SignersApi, UpdateSignerBody};
 pub use tags::{CreateTagBody, ListTagsRequest, TagsApi, UpdateTagBody};
 pub use templates::{
-    CreateDocumentFromTemplateBody, EditorField, EstimateTemplateCostBody, ListTemplatesRequest,
-    TemplateDocumentSigner, TemplateRoleBinding, TemplatesApi,
+    CreateDocumentFromTemplateBody, CreateTemplateRequest, EditorField, EstimateTemplateCostBody,
+    ListTemplatesRequest, TemplateDocumentSigner, TemplateRoleBinding, TemplatesApi,
 };
 pub use webhooks::{ListWebhookDispatchesRequest, RegisterWebhookBody, WebhooksApi};

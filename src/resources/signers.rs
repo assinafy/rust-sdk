@@ -13,6 +13,16 @@ use crate::pagination::Page;
 /// Only `full_name` is required by the API. `email` and `whatsapp_phone_number`
 /// are optional, but a signer needs at least one of them to be notified or
 /// verified through that channel.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "full_name": "John Dove",
+///   "email": "john@email.com",
+///   "whatsapp_phone_number": "+5548999990000"
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateSignerBody {
     /// Full legal name.
@@ -55,6 +65,16 @@ impl CreateSignerBody {
 /// `whatsapp_phone_number` may return `400 Bad Request` if the signer has
 /// unverified, in-flight documents that use that verification channel; the
 /// error message names the offending document(s).
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "full_name": "John Dove",
+///   "email": "john@email.com",
+///   "whatsapp_phone_number": "+5548999990000"
+/// }
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateSignerBody {
     /// New full name.
@@ -131,6 +151,24 @@ impl<'a> ListSignersRequest<'a> {
     }
 
     /// Execute the request.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "19e6b92e7895332ed9708535d8c",
+    ///       "full_name": "Bill M",
+    ///       "email": "billm@billm.org",
+    ///       "whatsapp_phone_number": null,
+    ///       "has_accepted_terms": false
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn send(self) -> Result<Page<Signer>> {
         let path = format!("accounts/{}/signers", self.account_id);
         let mut req = self.http.request(Method::GET, &path)?;
@@ -169,6 +207,33 @@ impl<'a> SignersApi<'a> {
     /// Create a signer.
     ///
     /// `POST /accounts/{account_id}/signers`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "full_name": "John Dove",
+    ///   "email": "john@email.com",
+    ///   "whatsapp_phone_number": "+5548999990000"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "signer",
+    ///     "id": "19f805d5a8319e0a753d92a9f4f",
+    ///     "full_name": "John Dove",
+    ///     "email": "john@email.com",
+    ///     "whatsapp_phone_number": null,
+    ///     "has_accepted_terms": false
+    ///   }
+    /// }
+    /// ```
     pub async fn create(&self, body: &CreateSignerBody) -> Result<Signer> {
         let path = format!("accounts/{}/signers", self.account_id);
         let req = self.http.request(Method::POST, &path)?.json(body);
@@ -192,6 +257,23 @@ impl<'a> SignersApi<'a> {
     /// Retrieve a single signer.
     ///
     /// `GET /accounts/{account_id}/signers/{signer_id}`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "signer",
+    ///     "id": "19f805d5a8319e0a753d92a9f4f",
+    ///     "full_name": "Audit Signer",
+    ///     "email": "billm+audit@billm.org",
+    ///     "whatsapp_phone_number": null,
+    ///     "has_accepted_terms": false
+    ///   }
+    /// }
+    /// ```
     pub async fn get<S: AsRef<str>>(&self, signer_id: S) -> Result<Signer> {
         let path = format!(
             "accounts/{}/signers/{}",
@@ -205,6 +287,31 @@ impl<'a> SignersApi<'a> {
     /// Update a signer.
     ///
     /// `PUT /accounts/{account_id}/signers/{signer_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "full_name": "John Dove Renamed"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "signer",
+    ///     "id": "19f805d5a8319e0a753d92a9f4f",
+    ///     "full_name": "John Dove Renamed",
+    ///     "email": "john@email.com",
+    ///     "whatsapp_phone_number": null,
+    ///     "has_accepted_terms": false
+    ///   }
+    /// }
+    /// ```
     pub async fn update<S: AsRef<str>>(
         &self,
         signer_id: S,
@@ -222,6 +329,16 @@ impl<'a> SignersApi<'a> {
     /// Delete a signer.
     ///
     /// `DELETE /accounts/{account_id}/signers/{signer_id}`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn delete<S: AsRef<str>>(&self, signer_id: S) -> Result<()> {
         let path = format!(
             "accounts/{}/signers/{}",

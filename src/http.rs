@@ -131,7 +131,7 @@ impl HttpClient {
         let status = res.status();
         let headers = res.headers().clone();
         let body = res.bytes().await?;
-        ensure_success(status, &body)?;
+        ensure_success(status, Some(&headers), &body)?;
         Ok((body, headers))
     }
 
@@ -152,19 +152,34 @@ impl HttpClient {
     pub(crate) async fn send_no_content(&self, req: RequestBuilder) -> Result<()> {
         let res = req.send().await?;
         let status = res.status();
+        let headers = res.headers().clone();
         let body = res.bytes().await?;
-        ensure_success(status, &body)
+        ensure_success(status, Some(&headers), &body)
     }
 }
 
 /// Returns `Ok(())` for 2xx responses, otherwise maps the body into an
 /// [`Error::Api`]. Centralises the success check shared by every send path.
-fn ensure_success(status: StatusCode, body: &[u8]) -> Result<()> {
+fn ensure_success(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Result<()> {
     if status.is_success() {
         Ok(())
     } else {
-        Err(map_error(status, body))
+        Err(map_error(status, headers, body))
     }
+}
+
+/// Parses the number of seconds to wait before retrying from the `Retry-After`
+/// or `X-Rate-Limit-Reset` response header, when present.
+fn retry_after_from(headers: Option<&HeaderMap>) -> Option<u64> {
+    let headers = headers?;
+    ["retry-after", "x-rate-limit-reset"]
+        .iter()
+        .find_map(|name| {
+            headers
+                .get(*name)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+        })
 }
 
 /// Extracts the response `Content-Type`, falling back to
@@ -186,10 +201,10 @@ async fn take_response(res: Response) -> Result<(StatusCode, HeaderMap, bytes::B
 
 fn decode_envelope<T: DeserializeOwned>(
     status: StatusCode,
-    _headers: &HeaderMap,
+    headers: &HeaderMap,
     body: &[u8],
 ) -> Result<T> {
-    ensure_success(status, body)?;
+    ensure_success(status, Some(headers), body)?;
     if body.is_empty() {
         // Some PUT endpoints respond 200 with no body; only types that
         // accept `()` survive this branch.
@@ -222,19 +237,40 @@ fn decode_data<T: DeserializeOwned>(
     }
 }
 
-fn map_error(status: StatusCode, body: &[u8]) -> Error {
-    let api = serde_json::from_slice::<ApiError>(body)
-        .or_else(|_| {
-            serde_json::from_slice::<Envelope<serde_json::Value>>(body).map(|e| ApiError {
-                status: e.status,
-                message: e.message,
-                data: e.data,
-            })
-        })
-        .unwrap_or_else(|_| ApiError {
+fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Error {
+    let retry_after = retry_after_from(headers);
+    let api = match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(serde_json::Value::Object(map)) => {
+            let code = map
+                .get("status")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u16)
+                .unwrap_or_else(|| status.as_u16());
+            let message = map
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            // Standard error envelopes carry a `data` field. Bodies without one
+            // (e.g. a route-miss `{ name, message, code, status }`) are kept
+            // whole so their `name`/`code` survive.
+            let data = match map.get("data") {
+                Some(data) => data.clone(),
+                None => serde_json::Value::Object(map),
+            };
+            ApiError {
+                status: code,
+                message,
+                data,
+                retry_after,
+            }
+        }
+        _ => ApiError {
             status: status.as_u16(),
             message: String::from_utf8_lossy(body).into_owned(),
             data: serde_json::Value::Null,
-        });
+            retry_after,
+        },
+    };
     Error::Api(api)
 }

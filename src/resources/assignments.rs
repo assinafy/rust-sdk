@@ -9,6 +9,7 @@ use crate::models::{
     Assignment, AssignmentMethod, CostEstimate, NotificationMethod, ResendCostEstimate,
     ResendNotificationResult, SignDocumentItem, VerificationMethod, WhatsAppNotification,
 };
+use crate::pagination::Page;
 
 fn reset_expiration_payload(new_expires_at: Option<&str>) -> serde_json::Value {
     serde_json::json!({ "expires_at": new_expires_at })
@@ -69,6 +70,21 @@ impl CreateAssignmentSigner {
 ///
 /// New integrations should use `signers`. The `signer_ids` field remains
 /// available for legacy deployments that still accept that documented alias.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "method": "virtual",
+///   "signers": [
+///     { "id": "19e6b92e7895332ed9708535d8c", "step": 1,
+///       "verification_method": "Email", "notification_methods": ["Email"] }
+///   ],
+///   "message": "Please review and sign this contract.",
+///   "expires_at": "2026-12-31T23:59:59Z",
+///   "copy_receivers": []
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAssignmentBody {
     /// Delivery method.
@@ -264,6 +280,65 @@ impl AssignmentField {
 /// without actually dispatching anything.
 pub type EstimateAssignmentCostBody = CreateAssignmentBody;
 
+/// Builder for `GET /assignments` (list assignments for an account).
+///
+/// The list endpoint requires an account context, supplied as the `accountId`
+/// query parameter, plus optional pagination.
+#[derive(Debug)]
+pub struct ListAssignmentsRequest<'a> {
+    http: &'a HttpClient,
+    account_id: String,
+    page: Option<u32>,
+    per_page: Option<u32>,
+}
+
+impl<'a> ListAssignmentsRequest<'a> {
+    /// 1-based page number.
+    pub fn page(mut self, page: u32) -> Self {
+        self.page = Some(page);
+        self
+    }
+
+    /// Results per page (server caps at 100).
+    pub fn per_page(mut self, per_page: u32) -> Self {
+        self.per_page = Some(per_page);
+        self
+    }
+
+    /// Execute the request.
+    ///
+    /// `GET /assignments?accountId={account_id}` (with optional `page` and
+    /// `per-page` query parameters).
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [
+    ///   { "id": "103033c9d2cec233bf65eea04999", "sender_email": "owner@acme.com",
+    ///     "method": "virtual", "expires_at": null, "message": "Please sign",
+    ///     "copy_receivers": [], "items": [],
+    ///     "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Ada Lovelace",
+    ///       "email": "ada@acme.com", "whatsapp_phone_number": null,
+    ///       "has_accepted_terms": false, "completed": false, "notification_history": [],
+    ///       "verification_method": "Email", "notification_methods": ["Email"],
+    ///       "step": 1, "notified": true } ],
+    ///     "summary": { "signer_count": 1, "completed_count": 0, "signers": [] },
+    ///     "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c", "url": "https://…" } ] }
+    /// ]}
+    /// ```
+    pub async fn send(self) -> Result<Page<Assignment>> {
+        let mut query: Vec<(&str, String)> = vec![("accountId", self.account_id)];
+        if let Some(v) = self.page {
+            query.push(("page", v.to_string()));
+        }
+        if let Some(v) = self.per_page {
+            query.push(("per-page", v.to_string()));
+        }
+        let req = self.http.request(Method::GET, "assignments")?.query(&query);
+        self.http.send_paged(req).await
+    }
+}
+
 /// Assignment endpoints.
 #[derive(Debug)]
 pub struct AssignmentsApi<'a> {
@@ -275,9 +350,73 @@ impl<'a> AssignmentsApi<'a> {
         Self { http }
     }
 
+    /// List the assignments belonging to an account.
+    ///
+    /// `GET /assignments?accountId={account_id}`. Returns a builder that adds
+    /// optional pagination and sends the request. The `accountId` query
+    /// parameter is required by the API — the SDK always sends it.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [
+    ///   { "id": "103033c9...", "sender_email": "owner@acme.com", "method": "virtual",
+    ///     "expires_at": null, "message": "Please sign", "copy_receivers": [],
+    ///     "signers": [ { "id": "19e6b9...", "full_name": "Ada", "email": "ada@acme.com",
+    ///       "step": 1, "completed": false, "verification_method": "Email",
+    ///       "notification_methods": ["Email"], "notified": true } ],
+    ///     "summary": { "signer_count": 1, "completed_count": 0, "signers": [ … ] },
+    ///     "signing_urls": [ { "signer_id": "19e6b9...", "url": "https://…" } ] }
+    /// ]}
+    /// ```
+    pub fn list<S: Into<String>>(&self, account_id: S) -> ListAssignmentsRequest<'_> {
+        ListAssignmentsRequest {
+            http: self.http,
+            account_id: account_id.into(),
+            page: None,
+            per_page: None,
+        }
+    }
+
     /// Request signatures from one or more signers.
     ///
     /// `POST /documents/{document_id}/assignments`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "method": "virtual",
+    ///   "signers": [
+    ///     { "id": "19e6b92e7895332ed9708535d8c", "step": 1,
+    ///       "verification_method": "Email", "notification_methods": ["Email"] }
+    ///   ],
+    ///   "message": "Please review and sign this contract.",
+    ///   "expires_at": "2026-12-31T23:59:59Z"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "resource": "assignment", "id": "103033c9d2cec233bf65eea04999",
+    ///   "sender_email": "owner@acme.com", "method": "virtual", "expires_at": null,
+    ///   "message": "Please review and sign this contract.", "copy_receivers": [],
+    ///   "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Ada Lovelace",
+    ///     "email": "ada@acme.com", "whatsapp_phone_number": null,
+    ///     "has_accepted_terms": false, "completed": false, "notification_history": [],
+    ///     "verification_method": "Email", "notification_methods": ["Email"],
+    ///     "step": 1, "notified": true } ],
+    ///   "items": [ { "id": "103033c9d33326458deb74fc3052", "page": null,
+    ///     "signer": { "id": "19e6b92e7895332ed9708535d8c" },
+    ///     "field": { "id": "102d25a48bc7357b93f9b8e01b24", "type": "virtual" },
+    ///     "display_settings": [], "value": null, "completed": false } ],
+    ///   "summary": { "signer_count": 1, "completed_count": 0, "signers": [] },
+    ///   "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c",
+    ///     "url": "https://app-sandbox.assinafy.com.br/sign/103033c950d865a248a11c5cf96c" } ] }
+    /// }
+    /// ```
     pub async fn create<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -291,6 +430,28 @@ impl<'a> AssignmentsApi<'a> {
     /// Estimate the cost of an assignment without creating it.
     ///
     /// `POST /documents/{document_id}/assignments/estimate-cost`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "method": "virtual",
+    ///   "signers": [
+    ///     { "id": "19e6b92e7895332ed9708535d8c",
+    ///       "verification_method": "Whatsapp", "notification_methods": ["Whatsapp"] }
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "documents": 1, "credits": 0, "needs_extra_document": false,
+    ///   "extra_document_cost": 0, "total_credits": 0, "breakdown": [],
+    ///   "document_balance": 80, "credit_balance": 0, "has_sufficient_resources": true,
+    ///   "blocking_reason": null, "message": null } }
+    /// ```
     pub async fn estimate_cost<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -307,6 +468,23 @@ impl<'a> AssignmentsApi<'a> {
     /// Extend an assignment's expiration deadline.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignmentId}/reset-expiration`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "expires_at": "2026-12-31T23:59:59Z" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "id": "103033c9d2cec233bf65eea04999", "sender_email": "owner@acme.com",
+    ///   "method": "virtual", "expires_at": "2026-12-31T23:59:59Z",
+    ///   "message": "Please sign", "copy_receivers": [], "signers": [], "items": [],
+    ///   "summary": { "signer_count": 1, "completed_count": 0, "signers": [] },
+    ///   "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c", "url": "https://…" } ] } }
+    /// ```
     pub async fn reset_expiration<D: AsRef<str>, A: AsRef<str>>(
         &self,
         document_id: D,
@@ -328,6 +506,14 @@ impl<'a> AssignmentsApi<'a> {
     /// Re-send the signature-request notification to a specific signer.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/resend`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "is_sent": true, "document_id": "103b041f599e7dcdbbbf3cb9382d",
+    ///   "signer_id": "103b041f4a97d41ca92debc3a4de" } }
+    /// ```
     pub async fn resend_to_signer<D: AsRef<str>, A: AsRef<str>, S: AsRef<str>>(
         &self,
         document_id: D,
@@ -347,6 +533,16 @@ impl<'a> AssignmentsApi<'a> {
     /// Estimate the cost of re-sending a notification to one signer.
     ///
     /// `POST /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/estimate-resend-cost`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "total": 0,
+    ///   "breakdown": [ { "code": "NotificationEmailResend",
+    ///     "name": "Email Notification Resend", "cost": 0 } ],
+    ///   "credit_balance": 0, "has_sufficient_credits": true } }
+    /// ```
     pub async fn estimate_resend_cost<D: AsRef<str>, A: AsRef<str>, S: AsRef<str>>(
         &self,
         document_id: D,
@@ -366,6 +562,19 @@ impl<'a> AssignmentsApi<'a> {
     /// List WhatsApp notifications for an assignment.
     ///
     /// `GET /documents/{document_id}/assignments/{assignment_id}/whatsapp-notifications`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [
+    ///   { "sent_at": 1710000000,
+    ///     "header": "Documento para assinatura: Contrato de Servico",
+    ///     "body": "Olá, você tem um documento para assinar.",
+    ///     "buttons": [ { "text": "Abrir documento",
+    ///       "url": "https://app-sandbox.assinafy.com.br/sign/103033c950d865a248a11c5cf96c" } ],
+    ///     "phone_number": "+5511999990001", "signer_id": "103033c9cd9426bbbb78eccd2c79" } ]
+    /// }
+    /// ```
     pub async fn whatsapp_notifications<D: AsRef<str>, A: AsRef<str>>(
         &self,
         document_id: D,
@@ -383,6 +592,22 @@ impl<'a> AssignmentsApi<'a> {
     /// Sign a document assignment on behalf of a signer access-code flow.
     ///
     /// `POST /documents/{document_id}/assignments/{assignment_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// [
+    ///   { "itemId": "103033c9d33326458deb74fc3052",
+    ///     "fieldId": "102d25a48bc7357b93f9b8e01b24",
+    ///     "pageId": "615213ed81b071f4293b2fc2", "value": "Signed by Ada Lovelace" }
+    /// ]
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [] }
+    /// ```
     pub async fn sign<D: AsRef<str>, A: AsRef<str>, I>(
         &self,
         document_id: D,
@@ -405,6 +630,18 @@ impl<'a> AssignmentsApi<'a> {
     /// Reject a document assignment on behalf of a signer access-code flow.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignment_id}/reject`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "decline_reason": "I do not agree with clause 2." }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [] }
+    /// ```
     pub async fn reject<D: AsRef<str>, A: AsRef<str>, R: AsRef<str>>(
         &self,
         document_id: D,

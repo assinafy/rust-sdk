@@ -12,6 +12,16 @@ use crate::http::HttpClient;
 ///
 /// On creation the `api_key` field contains the full key once. Subsequent
 /// `get` calls return a masked value.
+///
+/// # Response payload
+///
+/// ```json
+/// {
+///   "status": 200,
+///   "message": "",
+///   "data": { "api_key": "****************************************" }
+/// }
+/// ```
 #[derive(Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ApiKeyResponse {
@@ -30,6 +40,12 @@ impl fmt::Debug for ApiKeyResponse {
 }
 
 /// Body for `POST /users/api-keys`.
+///
+/// # Request payload
+///
+/// ```json
+/// { "password": "s3cr3t-p4ssw0rd" }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateApiKeyBody {
     /// Current user password. Required before rotating the personal API key.
@@ -59,6 +75,25 @@ impl<'a> ApiKeysApi<'a> {
     /// Generate a brand new API key, invalidating any previous one.
     ///
     /// `POST /users/api-keys`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "password": "s3cr3t-p4ssw0rd" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// The `api_key` is returned in full **only** on creation; later `get`
+    /// calls return a masked value.
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": { "api_key": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8g9h0" }
+    /// }
+    /// ```
     pub async fn create(&self, body: &CreateApiKeyBody) -> Result<ApiKeyResponse> {
         let req = self
             .http
@@ -70,6 +105,16 @@ impl<'a> ApiKeysApi<'a> {
     /// Retrieve the (masked) current API key.
     ///
     /// `GET /users/api-keys`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": { "api_key": "****************************************" }
+    /// }
+    /// ```
     pub async fn get(&self) -> Result<ApiKeyResponse> {
         let req = self.http.request(Method::GET, "users/api-keys")?;
         self.http.send_envelope(req).await

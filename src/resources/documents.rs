@@ -97,6 +97,60 @@ impl ListDocumentsRequest {
     }
 }
 
+/// Builder for `GET /accounts/{account_id}/documents/search` — the lightweight
+/// document search endpoint.
+#[derive(Debug, Clone)]
+pub struct SearchDocumentsRequest {
+    search: String,
+    status: Option<String>,
+    page: Option<u32>,
+    per_page: Option<u32>,
+}
+
+impl SearchDocumentsRequest {
+    /// Build a search request for the given free-text term.
+    pub fn new<S: Into<String>>(term: S) -> Self {
+        Self {
+            search: term.into(),
+            status: None,
+            page: None,
+            per_page: None,
+        }
+    }
+
+    /// Filter by status code.
+    pub fn status<S: Into<String>>(mut self, status: S) -> Self {
+        self.status = Some(status.into());
+        self
+    }
+
+    /// 1-based page number.
+    pub fn page(mut self, page: u32) -> Self {
+        self.page = Some(page);
+        self
+    }
+
+    /// Results per page (server caps at 100).
+    pub fn per_page(mut self, per_page: u32) -> Self {
+        self.per_page = Some(per_page);
+        self
+    }
+
+    fn into_query(self) -> Vec<(&'static str, String)> {
+        let mut q = vec![("search", self.search)];
+        if let Some(v) = self.status {
+            q.push(("status", v));
+        }
+        if let Some(v) = self.page {
+            q.push(("page", v.to_string()));
+        }
+        if let Some(v) = self.per_page {
+            q.push(("per-page", v.to_string()));
+        }
+        q
+    }
+}
+
 /// Body for `POST /accounts/{account_id}/documents` (multipart/form-data).
 ///
 /// The API requires a `file` part containing the PDF (≤ 25 MB, ≤ 2000 pages).
@@ -157,6 +211,15 @@ impl<'a> DocumentsApi<'a> {
     /// List all known document statuses.
     ///
     /// `GET /documents/statuses`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [
+    ///   { "code": "metadata_ready", "deletable": true },
+    ///   { "code": "uploaded", "deletable": false }
+    /// ]}
+    /// ```
     pub async fn statuses(&self) -> Result<Vec<DocumentStatusInfo>> {
         let req = self.http.request(Method::GET, "documents/statuses")?;
         self.http.send_envelope(req).await
@@ -164,7 +227,22 @@ impl<'a> DocumentsApi<'a> {
 
     /// List documents in an account.
     ///
-    /// `GET /accounts/{account_id}/documents`.
+    /// `GET /accounts/{account_id}/documents`. Paginated via `X-Pagination-*`
+    /// response headers; `data` is a bare array of documents.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [
+    ///   { "id": "103acccd...", "account_id": "102d25a4...", "template_id": null,
+    ///     "name": "contract.pdf", "status": "metadata_ready",
+    ///     "artifacts": { "original": "https://…", "thumbnail": "https://…" },
+    ///     "is_closed": false, "signing_url": "https://…", "decline_reason": null,
+    ///     "declined_by": null, "tags": [], "created_at": "2026-07-19T14:56:54Z",
+    ///     "updated_at": "2026-07-19T14:56:56Z", "assignment": null,
+    ///     "pages": [ { "id": "…", "number": 1, "width": 1275, "height": 1651, "download_url": "https://…" } ] }
+    /// ]}
+    /// ```
     pub async fn list<S: AsRef<str>>(
         &self,
         account_id: S,
@@ -184,6 +262,23 @@ impl<'a> DocumentsApi<'a> {
     /// `POST /accounts/{account_id}/documents`. Accepts either an enveloped or
     /// a direct response so the SDK keeps working if the API ever returns the
     /// document object without the `{ status, message, data }` wrapper.
+    ///
+    /// The request is `multipart/form-data` with a single `file` part (the PDF);
+    /// there is no JSON request body. A freshly uploaded document is returned in
+    /// status `"uploaded"` with only the `original` artifact and empty `pages`;
+    /// the `thumbnail` artifact and `pages` appear once processing completes.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "resource": "document", "id": "103b03a4...", "account_id": "102d25a4...",
+    ///   "template_id": null, "name": "contract.pdf", "status": "uploaded",
+    ///   "artifacts": { "original": "https://…" }, "is_closed": false,
+    ///   "signing_url": "https://…", "decline_reason": null, "declined_by": null,
+    ///   "tags": [], "created_at": "2026-07-20T16:30:21Z",
+    ///   "updated_at": "2026-07-20T16:30:21Z", "pages": [] } }
+    /// ```
     pub async fn upload<S: AsRef<str>>(
         &self,
         account_id: S,
@@ -195,18 +290,86 @@ impl<'a> DocumentsApi<'a> {
         self.http.send_data(req).await
     }
 
+    /// Search documents in an account (lightweight).
+    ///
+    /// `GET /accounts/{account_id}/documents/search`. Like [`list`](Self::list)
+    /// this is paginated via `X-Pagination-*` headers, but it is optimised for
+    /// free-text lookups and returns a trimmed document shape.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [
+    ///   { "id": "103acc...", "name": "contract.pdf", "status": "metadata_ready",
+    ///     "account_id": "102d25a4...", "artifacts": { "original": "https://…" }, "tags": [] }
+    /// ]}
+    /// ```
+    pub async fn search<S: AsRef<str>>(
+        &self,
+        account_id: S,
+        req: SearchDocumentsRequest,
+    ) -> Result<Page<Document>> {
+        let path = format!("accounts/{}/documents/search", account_id.as_ref());
+        let request = self
+            .http
+            .request(Method::GET, &path)?
+            .query(&req.into_query());
+        self.http.send_paged(request).await
+    }
+
     /// Retrieve a document.
     ///
     /// `GET /documents/{document_id}`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "id": "103acc...", "account_id": "102d25a4...", "template_id": null,
+    ///   "name": "contract.pdf", "status": "metadata_ready",
+    ///   "artifacts": { "original": "https://…", "thumbnail": "https://…" },
+    ///   "is_closed": false, "tags": [], "assignment": null,
+    ///   "pages": [ { "id": "…", "number": 1, "width": 1275, "height": 1651, "download_url": "https://…" } ] } }
+    /// ```
     pub async fn get<S: AsRef<str>>(&self, document_id: S) -> Result<Document> {
         let path = format!("documents/{}", document_id.as_ref());
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
 
+    /// Rename a document.
+    ///
+    /// `PATCH /documents/{document_id}` with body `{ "name": "New name.pdf" }`
+    /// (`name` is required, max 255 chars). Returns the updated document.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "name": "Signed service agreement.pdf" }
+    /// ```
+    pub async fn rename<S: AsRef<str>, N: Into<String>>(
+        &self,
+        document_id: S,
+        name: N,
+    ) -> Result<Document> {
+        let path = format!("documents/{}", document_id.as_ref());
+        let req = self
+            .http
+            .request(Method::PATCH, &path)?
+            .json(&serde_json::json!({ "name": name.into() }));
+        self.http.send_envelope(req).await
+    }
+
     /// Delete a document.
     ///
-    /// `DELETE /documents/{documentId}`.
+    /// `DELETE /documents/{documentId}`. Only documents in a deletable status
+    /// (see [`statuses`](Self::statuses)) may be removed.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [] }
+    /// ```
     pub async fn delete<S: AsRef<str>>(&self, document_id: S) -> Result<()> {
         let path = format!("documents/{}", document_id.as_ref());
         let req = self.http.request(Method::DELETE, &path)?;
@@ -216,6 +379,12 @@ impl<'a> DocumentsApi<'a> {
     /// Download an artifact (raw bytes + content type).
     ///
     /// `GET /documents/{document_id}/download/{artifact_name}`.
+    ///
+    /// # Response
+    ///
+    /// The response body is the raw artifact bytes (for `original`,
+    /// `Content-Type: application/pdf`), not a JSON envelope. The returned tuple
+    /// carries the bytes and the response `Content-Type` header.
     pub async fn download_artifact<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -234,6 +403,12 @@ impl<'a> DocumentsApi<'a> {
     /// Download the preview thumbnail (PNG or JPEG bytes).
     ///
     /// `GET /documents/{document_id}/thumbnail`.
+    ///
+    /// # Response
+    ///
+    /// The response body is the raw image bytes (`image/png` or `image/jpeg`),
+    /// not a JSON envelope. The returned tuple carries the bytes and the
+    /// response `Content-Type` header.
     pub async fn download_thumbnail<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -246,6 +421,12 @@ impl<'a> DocumentsApi<'a> {
     /// Download a single document page as JPEG.
     ///
     /// `GET /documents/{document_id}/pages/{page_id}/download`.
+    ///
+    /// # Response
+    ///
+    /// The response body is the raw page image bytes (`image/jpeg`), not a JSON
+    /// envelope. The returned tuple carries the bytes and the response
+    /// `Content-Type` header.
     pub async fn download_page<D: AsRef<str>, P: AsRef<str>>(
         &self,
         document_id: D,
@@ -264,7 +445,18 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// `GET /documents/{signature_hash}/verify`. Requires no authentication.
     /// When the hash is unknown the call still succeeds with
-    /// [`DocumentVerification::is_valid`] set to `false`.
+    /// [`DocumentVerification::is_valid`] set to `false`. Note that
+    /// `page_count` and `signer_count` are returned as strings.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "hash": "FE32EDDADE7CBDDCBB934E7402047450B0E59C02", "id": "103acccd...",
+    ///   "status": "certificated", "page_count": "1", "signer_count": "1",
+    ///   "completed_count": 1, "completed_at": "2026-07-19T19:27:44Z",
+    ///   "verified_at": "2026-07-19T19:27:46Z", "is_valid": true, "message": "" } }
+    /// ```
     pub async fn verify<S: AsRef<str>>(&self, signature_hash: S) -> Result<DocumentVerification> {
         let path = format!("documents/{}/verify", signature_hash.as_ref());
         let req = self.http.request(Method::GET, &path)?;

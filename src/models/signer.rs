@@ -77,4 +77,9 @@ pub struct SignerSelf {
     /// Whether the signer has uploaded an initials image.
     #[serde(default)]
     pub has_initial: bool,
+    /// Whether the signer opted to reuse their saved signature/initials across
+    /// documents. When `false`, the signer is prompted to draw a fresh
+    /// signature for each document.
+    #[serde(default)]
+    pub is_signature_reusable: bool,
 }

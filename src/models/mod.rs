@@ -22,7 +22,7 @@ pub mod template;
 pub mod user;
 pub mod webhook;
 
-pub use account::Account;
+pub use account::{Account, AccountTheme};
 pub use activity::{Activity, ActivityOrigin};
 pub use assignment::{
     Assignment, AssignmentItem, AssignmentMethod, AssignmentSigner, AssignmentSummary,

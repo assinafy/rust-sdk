@@ -37,6 +37,37 @@ impl<'a> ListActivitiesRequest<'a> {
     }
 
     /// Execute the request.
+    ///
+    /// `GET /documents/{documentId}/activities`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": 15442,
+    ///       "event": "document_metadata_ready",
+    ///       "message": "Documento processado.",
+    ///       "payload": [],
+    ///       "origin": null,
+    ///       "created_at": "2026-07-20T16:30:23Z"
+    ///     },
+    ///     {
+    ///       "id": 15441,
+    ///       "event": "document_uploaded",
+    ///       "message": "Documento criado.",
+    ///       "payload": [],
+    ///       "origin": { "ip": "203.0.113.10", "user-agent": "curl/8.7.1" },
+    ///       "created_at": "2026-07-20T16:30:21Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// Pagination totals are returned in `X-Pagination-*` response headers.
     pub async fn send(self) -> Result<Page<Activity>> {
         let path = format!("documents/{}/activities", self.document_id);
         let mut req = self.http.request(Method::GET, &path)?;

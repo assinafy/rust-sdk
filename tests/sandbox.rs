@@ -10,8 +10,9 @@
 mod common;
 
 use assinafy::resources::{
-    CreateFieldBody, CreateSignerBody, CreateTagBody, UpdateFieldBody, UpdateSignerBody,
-    UpdateTagBody,
+    CreateFieldBody, CreateSignerBody, CreateTagBody, CreateTemplateRequest,
+    SearchDocumentsRequest, UpdateFieldBody, UpdateSignerBody, UpdateTagBody,
+    UploadDocumentRequest,
 };
 use uuid::Uuid;
 
@@ -374,6 +375,127 @@ async fn public_document_info_is_typed() {
         .expect("public document info");
     assert_eq!(public.id, doc.id);
     assert!(!public.name.is_empty(), "public document has a name");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn accounts_list_get_and_theme() {
+    let (client, account_id) = sandbox_or_skip!();
+
+    let accounts = client.accounts_api().list().await.expect("list accounts");
+    assert!(
+        accounts.iter().any(|a| a.id == account_id),
+        "the configured account should appear in the list"
+    );
+
+    let account = client
+        .account(&account_id)
+        .get()
+        .await
+        .expect("get account");
+    assert_eq!(account.id, account_id);
+    assert!(!account.name.is_empty(), "account has a name");
+
+    // Theme is always available (colors/logo may be null).
+    let _theme = client
+        .account(&account_id)
+        .theme()
+        .await
+        .expect("get theme");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn assignments_list_requires_account_context() {
+    let (client, account_id) = sandbox_or_skip!();
+    // The SDK always supplies the required `accountId` query param, so this
+    // must not 400 with "account context required".
+    let _page = client
+        .assignments()
+        .list(&account_id)
+        .per_page(5)
+        .send()
+        .await
+        .expect("list assignments");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn documents_rename_and_search() {
+    use assinafy::models::DocumentStatus;
+    use std::time::Duration;
+
+    let (client, account_id) = sandbox_or_skip!();
+    let docs = client.documents();
+
+    let upload =
+        UploadDocumentRequest::from_bytes(format!("{}.pdf", unique("rust-rename")), minimal_pdf());
+    let doc = docs.upload(&account_id, upload).await.expect("upload");
+
+    // Wait until the document is deletable (metadata ready) before mutating it.
+    let deletable = docs.statuses().await.expect("statuses");
+    let is_deletable = |s: &DocumentStatus| {
+        deletable
+            .iter()
+            .any(|info| info.code == *s && info.deletable)
+    };
+    let mut status = doc.status.clone();
+    let mut tries = 0;
+    while !is_deletable(&status) {
+        assert!(tries < 30, "document stuck in {status}");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        status = docs.get(&doc.id).await.expect("get doc").status;
+        tries += 1;
+    }
+
+    let new_name = format!("{}.pdf", unique("rust-renamed"));
+    let renamed = docs.rename(&doc.id, &new_name).await.expect("rename");
+    assert_eq!(renamed.name, new_name);
+
+    let page = docs
+        .search(
+            &account_id,
+            SearchDocumentsRequest::new("rust-renamed").per_page(5),
+        )
+        .await
+        .expect("search documents");
+    assert!(page.meta.current_page.is_some(), "search is paginated");
+
+    docs.delete(&doc.id).await.expect("delete document");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn templates_create_get_delete() {
+    use assinafy::models::TemplateStatus;
+    use std::time::Duration;
+
+    let (client, account_id) = sandbox_or_skip!();
+    let templates = client.templates(&account_id);
+
+    let file =
+        CreateTemplateRequest::from_bytes(format!("{}.pdf", unique("rust-tpl")), minimal_pdf());
+    let created = templates.create(file).await.expect("create template");
+    assert!(!created.id.is_empty(), "template has an id");
+
+    // A template cannot be deleted until it finishes processing.
+    let mut fetched = templates.get(&created.id).await.expect("get template");
+    assert_eq!(fetched.id, created.id);
+    let mut tries = 0;
+    while matches!(
+        fetched.status,
+        TemplateStatus::Processing | TemplateStatus::Uploading | TemplateStatus::Uploaded
+    ) {
+        assert!(tries < 30, "template stuck in {}", fetched.status);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        fetched = templates.get(&created.id).await.expect("get template");
+        tries += 1;
+    }
+
+    templates
+        .delete(&created.id)
+        .await
+        .expect("delete template");
 }
 
 /// A 1-page valid PDF used to exercise the upload endpoint without bundling a

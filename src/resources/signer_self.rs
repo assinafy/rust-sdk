@@ -13,6 +13,15 @@ use crate::models::{ArtifactName, Document, SignDocumentItem, SignerSelf, Signer
 use crate::pagination::Page;
 
 /// Body for `POST /verify`.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "verification-code": "123456",
+///   "signer-access-code": "AbCd1234EfGh5678"
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifyCodeBody {
     /// One-time code emailed or sent via WhatsApp to the signer.
@@ -40,6 +49,21 @@ impl VerifyCodeBody {
 }
 
 /// Body for `PUT /documents/{document_id}/signers/confirm-data`.
+///
+/// # Request payload
+///
+/// All fields are optional; send only the ones being confirmed/updated.
+///
+/// ```json
+/// {
+///   "full_name": "Maria Silva",
+///   "email": "maria.silva@example.com",
+///   "government_id": "123.456.789-09",
+///   "whatsapp_phone_number": "+5511998877665",
+///   "has_accepted_terms": true,
+///   "code": "123456"
+/// }
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConfirmSignerDataBody {
     /// Confirmed/updated full name.
@@ -48,6 +72,10 @@ pub struct ConfirmSignerDataBody {
     /// Confirmed/updated email.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// Confirmed/updated government ID (CPF/CNPJ). This is the field the
+    /// documented confirm-data body expects.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub government_id: Option<String>,
     /// Confirmed/updated WhatsApp phone number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
@@ -77,6 +105,12 @@ impl ConfirmSignerDataBody {
         self
     }
 
+    /// Set the signer government ID (CPF/CNPJ).
+    pub fn government_id<S: Into<String>>(mut self, government_id: S) -> Self {
+        self.government_id = Some(government_id.into());
+        self
+    }
+
     /// Set the signer WhatsApp phone number.
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
@@ -97,6 +131,17 @@ impl ConfirmSignerDataBody {
 }
 
 /// Body for signer-facing multiple-document signing.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "document_ids": [
+///     "103acccd24234c07858ffddf6d84",
+///     "103acccd9f0e1d2c3b4a5968778a"
+///   ]
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignMultipleDocumentsBody {
     /// Document IDs to sign.
@@ -117,6 +162,18 @@ impl SignMultipleDocumentsBody {
 }
 
 /// Body for signer-facing multiple-document decline.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "document_ids": [
+///     "103acccd24234c07858ffddf6d84",
+///     "103acccd9f0e1d2c3b4a5968778a"
+///   ],
+///   "decline_reason": "Incorrect signer information"
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeclineMultipleDocumentsBody {
     /// Document IDs to decline.
@@ -191,6 +248,35 @@ impl<'a> ListSignerDocumentsRequest<'a> {
     }
 
     /// Execute the request.
+    ///
+    /// # Response payload
+    ///
+    /// Paginated via `X-Pagination-*` headers; the body is an enveloped array
+    /// of documents.
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "103acccd24234c07858ffddf6d84",
+    ///       "account_id": "102d25a489f34a275d31a16045fd",
+    ///       "template_id": null,
+    ///       "name": "contract.pdf",
+    ///       "status": "metadata_ready",
+    ///       "artifacts": { "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original" },
+    ///       "is_closed": false,
+    ///       "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///       "decline_reason": null,
+    ///       "declined_by": null,
+    ///       "tags": [],
+    ///       "created_at": "2026-07-19T14:56:54Z",
+    ///       "updated_at": "2026-07-19T14:56:56Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn send(self) -> Result<Page<Document>> {
         let path = format!("signers/{}/documents", self.signer_id);
         let mut req = self.http.request(Method::GET, &path)?;
@@ -234,6 +320,26 @@ impl<'a> SignerSelfApi<'a> {
     /// Retrieve the authenticated signer.
     ///
     /// `GET /signers/self`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "signer",
+    ///     "id": "102d25a4a1b2c3d4e5f60718293a4b5c",
+    ///     "full_name": "Maria Silva",
+    ///     "email": "maria.silva@example.com",
+    ///     "whatsapp_phone_number": "+5511998877665",
+    ///     "has_accepted_terms": true,
+    ///     "has_signature": true,
+    ///     "has_initial": false,
+    ///     "is_signature_reusable": true
+    ///   }
+    /// }
+    /// ```
     pub async fn me(&self) -> Result<SignerSelf> {
         let req = self.http.request(Method::GET, "signers/self")?;
         self.http.send_envelope(req).await
@@ -242,6 +348,27 @@ impl<'a> SignerSelfApi<'a> {
     /// Accept the platform terms.
     ///
     /// `PUT /signers/accept-terms`.
+    ///
+    /// # Request payload
+    ///
+    /// A body is sent only when a signer access code is configured on the
+    /// client; otherwise the request has no body.
+    ///
+    /// ```json
+    /// {
+    ///   "signer-access-code": "AbCd1234EfGh5678"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn accept_terms(&self) -> Result<()> {
         let mut req = self.http.request(Method::PUT, "signers/accept-terms")?;
         if let Some(code) = self.http.auth().signer_access_code() {
@@ -253,6 +380,28 @@ impl<'a> SignerSelfApi<'a> {
     /// Verify the signer's identity using a one-time code.
     ///
     /// `POST /verify`.
+    ///
+    /// # Request payload
+    ///
+    /// The signer access code is injected automatically when configured on the
+    /// client.
+    ///
+    /// ```json
+    /// {
+    ///   "verification-code": "123456",
+    ///   "signer-access-code": "AbCd1234EfGh5678"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn verify(&self, body: &VerifyCodeBody) -> Result<()> {
         let mut json = serde_json::to_value(body)?;
         if let (Some(code), Some(object)) =
@@ -269,6 +418,28 @@ impl<'a> SignerSelfApi<'a> {
     /// Confirm/update signer profile data within a specific document context.
     ///
     /// `PUT /documents/{document_id}/signers/confirm-data`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "full_name": "Maria Silva",
+    ///   "email": "maria.silva@example.com",
+    ///   "government_id": "123.456.789-09",
+    ///   "whatsapp_phone_number": "+5511998877665",
+    ///   "has_accepted_terms": true
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn confirm_data<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -282,6 +453,37 @@ impl<'a> SignerSelfApi<'a> {
     /// Retrieve the full signable document for the current signer.
     ///
     /// `GET /sign`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "id": "103acccd24234c07858ffddf6d84",
+    ///     "account_id": "102d25a489f34a275d31a16045fd",
+    ///     "template_id": null,
+    ///     "name": "contract.pdf",
+    ///     "status": "metadata_ready",
+    ///     "artifacts": {
+    ///       "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original",
+    ///       "thumbnail": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../thumbnail"
+    ///     },
+    ///     "is_closed": false,
+    ///     "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///     "decline_reason": null,
+    ///     "declined_by": null,
+    ///     "tags": [],
+    ///     "assignment": null,
+    ///     "pages": [
+    ///       { "id": "103acccd5c73af8009c3644af591", "number": 1, "height": 1651, "width": 1275 }
+    ///     ],
+    ///     "created_at": "2026-07-19T14:56:54Z",
+    ///     "updated_at": "2026-07-19T14:56:56Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn signable_document(&self) -> Result<Document> {
         let req = self.http.request(Method::GET, "sign")?;
         self.http.send_data(req).await
@@ -290,6 +492,31 @@ impl<'a> SignerSelfApi<'a> {
     /// Sign one assignment with field values.
     ///
     /// `POST /documents/{document_id}/assignments/{assignment_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// A JSON array of filled field items.
+    ///
+    /// ```json
+    /// [
+    ///   {
+    ///     "itemId": "103acccd7a1b2c3d4e5f60718293",
+    ///     "fieldId": "102f88b1c2d3e4f5a6b7c8d9e0f1",
+    ///     "pageId": "103acccd5c73af8009c3644af591",
+    ///     "value": "Maria Silva"
+    ///   }
+    /// ]
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn sign<D: AsRef<str>, A: AsRef<str>, I>(
         &self,
         document_id: D,
@@ -312,6 +539,24 @@ impl<'a> SignerSelfApi<'a> {
     /// Decline one assignment.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignment_id}/reject`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "decline_reason": "Incorrect signer information"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn decline<D: AsRef<str>, A: AsRef<str>, R: AsRef<str>>(
         &self,
         document_id: D,
@@ -333,6 +578,37 @@ impl<'a> SignerSelfApi<'a> {
     /// Retrieve the document associated with a signer before verification.
     ///
     /// `GET /signers/{signer_id}/document`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "id": "103acccd24234c07858ffddf6d84",
+    ///     "account_id": "102d25a489f34a275d31a16045fd",
+    ///     "template_id": null,
+    ///     "name": "contract.pdf",
+    ///     "status": "metadata_ready",
+    ///     "artifacts": {
+    ///       "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original",
+    ///       "thumbnail": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../thumbnail"
+    ///     },
+    ///     "is_closed": false,
+    ///     "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///     "decline_reason": null,
+    ///     "declined_by": null,
+    ///     "tags": [],
+    ///     "assignment": null,
+    ///     "pages": [
+    ///       { "id": "103acccd5c73af8009c3644af591", "number": 1, "height": 1651, "width": 1275 }
+    ///     ],
+    ///     "created_at": "2026-07-19T14:56:54Z",
+    ///     "updated_at": "2026-07-19T14:56:56Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn current_document<S: AsRef<str>>(&self, signer_id: S) -> Result<Document> {
         let path = format!("signers/{}/document", signer_id.as_ref());
         let req = self.http.request(Method::GET, &path)?;
@@ -355,9 +631,73 @@ impl<'a> SignerSelfApi<'a> {
         }
     }
 
+    /// Search a signer's documents (lightweight).
+    ///
+    /// `GET /signers/{signer_id}/documents/search?search={term}`. Paginated via
+    /// `X-Pagination-*` headers.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "103acccd24234c07858ffddf6d84",
+    ///       "account_id": "102d25a489f34a275d31a16045fd",
+    ///       "template_id": null,
+    ///       "name": "contract.pdf",
+    ///       "status": "metadata_ready",
+    ///       "artifacts": { "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original" },
+    ///       "is_closed": false,
+    ///       "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///       "decline_reason": null,
+    ///       "declined_by": null,
+    ///       "tags": [],
+    ///       "created_at": "2026-07-19T14:56:54Z",
+    ///       "updated_at": "2026-07-19T14:56:56Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
+    pub async fn search_documents<S: AsRef<str>, T: AsRef<str>>(
+        &self,
+        signer_id: S,
+        term: T,
+    ) -> Result<Page<Document>> {
+        let path = format!("signers/{}/documents/search", signer_id.as_ref());
+        let req = self
+            .http
+            .request(Method::GET, &path)?
+            .query(&[("search", term.as_ref())]);
+        self.http.send_paged(req).await
+    }
+
     /// Sign multiple virtual documents at once.
     ///
     /// `PUT /signers/documents/sign-multiple`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "document_ids": [
+    ///     "103acccd24234c07858ffddf6d84",
+    ///     "103acccd9f0e1d2c3b4a5968778a"
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn sign_multiple(&self, body: &SignMultipleDocumentsBody) -> Result<()> {
         let req = self
             .http
@@ -369,6 +709,28 @@ impl<'a> SignerSelfApi<'a> {
     /// Decline multiple documents at once.
     ///
     /// `PUT /signers/documents/decline-multiple`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "document_ids": [
+    ///     "103acccd24234c07858ffddf6d84",
+    ///     "103acccd9f0e1d2c3b4a5968778a"
+    ///   ],
+    ///   "decline_reason": "Incorrect signer information"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn decline_multiple(&self, body: &DeclineMultipleDocumentsBody) -> Result<()> {
         let req = self
             .http
@@ -401,6 +763,19 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// The server stores the bytes as-is; supply a PNG or JPEG.
     /// `POST /signature`.
+    ///
+    /// The request body is the raw image bytes (not JSON); the image kind is
+    /// selected via the `?type=signature|initial` query parameter.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn upload_signature(
         &self,
         kind: SignerType,

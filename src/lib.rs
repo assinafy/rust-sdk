@@ -4,10 +4,15 @@
 //! electronic-signature API (`https://api.assinafy.com.br/v1`).
 //!
 //! The SDK is organised around a single [`Client`] that exposes a resource
-//! module per API surface — signers, documents, assignments, templates, tags,
-//! activities, API keys, and authentication helpers. Every call is `async`,
-//! returns a strongly-typed [`Result`], and uses the same response envelope
-//! the API itself uses (`{ status, message, data }`).
+//! module per API surface — accounts, signers, documents, assignments,
+//! templates, tags, fields, webhooks, activities, API keys, and authentication
+//! helpers. Every call is `async`, returns a strongly-typed [`Result`], and
+//! uses the same response envelope the API itself uses
+//! (`{ status, message, data }`).
+//!
+//! Account-level operations are reached via [`Client::accounts_api`] (list and
+//! create accounts) and [`Client::account`] (get/update/delete an account plus
+//! its theme and logo).
 //!
 //! ## Quick start
 //!
@@ -65,7 +70,10 @@
 //!
 //! All operations return [`Result<T, Error>`](Error). API failures preserve
 //! the HTTP status, the server-provided message and the raw `data` payload so
-//! callers can branch on specific error codes without losing fidelity.
+//! callers can branch on specific error codes without losing fidelity. The API
+//! rate-limits requests (see the `X-Rate-Limit-*` response headers);
+//! [`Error::is_rate_limited`] and [`Error::retry_after`] surface `429`
+//! responses and the number of seconds to wait before retrying.
 //!
 //! ## Cargo features
 //!
@@ -76,6 +84,13 @@
 
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+// Compile-check every code block in the README as a doctest without duplicating
+// the crate-level documentation above. `cfg(doctest)` keeps this out of the
+// build and the rendered docs.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
 
 mod auth;
 mod client;

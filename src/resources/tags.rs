@@ -9,6 +9,15 @@ use crate::models::Tag;
 use crate::pagination::Page;
 
 /// Body for `POST /accounts/{account_id}/tags`.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "name": "Contracts",
+///   "color": "ff8800"
+/// }
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateTagBody {
     /// Tag name (1–64 chars, trimmed; case-insensitively unique).
@@ -41,6 +50,15 @@ impl CreateTagBody {
 }
 
 /// Body for `PUT /accounts/{account_id}/tags/{tag_id}`.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "name": "Signed Contracts",
+///   "color": "00aa55"
+/// }
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateTagBody {
     /// New name. Omit to leave unchanged.
@@ -113,6 +131,24 @@ impl<'a> ListTagsRequest<'a> {
     }
 
     /// Execute the request.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "103aa221874346e6b3de41688526",
+    ///       "name": "Contracts",
+    ///       "color": null,
+    ///       "created_at": "2026-07-18T19:03:45Z",
+    ///       "updated_at": "2026-07-18T19:03:45Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn send(self) -> Result<Page<Tag>> {
         let path = format!("accounts/{}/tags", self.account_id);
         let mut req = self.http.request(Method::GET, &path)?;
@@ -163,6 +199,32 @@ impl<'a> TagsApi<'a> {
     /// Create a tag.
     ///
     /// `POST /accounts/{account_id}/tags`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "name": "Contracts",
+    ///   "color": "ff8800"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "tag",
+    ///     "id": "103aa221874346e6b3de41688526",
+    ///     "name": "Contracts",
+    ///     "color": "ff8800",
+    ///     "created_at": "2026-07-18T19:03:45Z",
+    ///     "updated_at": "2026-07-18T19:03:45Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn create(&self, body: &CreateTagBody) -> Result<Tag> {
         let path = format!("accounts/{}/tags", self.account_id);
         let req = self.http.request(Method::POST, &path)?.json(body);
@@ -172,6 +234,31 @@ impl<'a> TagsApi<'a> {
     /// Update a tag.
     ///
     /// `PUT /accounts/{account_id}/tags/{tag_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "name": "Signed Contracts",
+    ///   "color": "00aa55"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "id": "103aa221874346e6b3de41688526",
+    ///     "name": "Signed Contracts",
+    ///     "color": "00aa55",
+    ///     "created_at": "2026-07-18T19:03:45Z",
+    ///     "updated_at": "2026-07-20T16:30:27Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn update<S: AsRef<str>>(&self, tag_id: S, body: &UpdateTagBody) -> Result<Tag> {
         let path = format!("accounts/{}/tags/{}", self.account_id, tag_id.as_ref());
         let req = self.http.request(Method::PUT, &path)?.json(body);
@@ -181,6 +268,16 @@ impl<'a> TagsApi<'a> {
     /// Delete a tag.
     ///
     /// `DELETE /accounts/{account_id}/tags/{tag_id}`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn delete<S: AsRef<str>>(&self, tag_id: S) -> Result<()> {
         self.delete_with_force(tag_id, false).await
     }
@@ -188,6 +285,16 @@ impl<'a> TagsApi<'a> {
     /// Delete a tag with an explicit `force` option.
     ///
     /// `DELETE /accounts/{account_id}/tags/{tag_id}?force=true`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn delete_with_force<S: AsRef<str>>(&self, tag_id: S, force: bool) -> Result<()> {
         let path = format!("accounts/{}/tags/{}", self.account_id, tag_id.as_ref());
         let mut req = self.http.request(Method::DELETE, &path)?;
@@ -200,6 +307,24 @@ impl<'a> TagsApi<'a> {
     /// List tags currently attached to a document.
     ///
     /// `GET /accounts/{account_id}/documents/{document_id}/tags`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "103b03a53c0b5c0ddd885c0391c8",
+    ///       "name": "Contracts",
+    ///       "color": "ff8800",
+    ///       "created_at": "2026-07-20T16:30:27Z",
+    ///       "updated_at": "2026-07-20T16:30:27Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn list_for_document<S: AsRef<str>>(&self, document_id: S) -> Result<Vec<Tag>> {
         let path = format!(
             "accounts/{}/documents/{}/tags",
@@ -213,6 +338,32 @@ impl<'a> TagsApi<'a> {
     /// Append tag names to a document (idempotent on existing tags).
     ///
     /// `POST /accounts/{account_id}/documents/{document_id}/tags`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "tags": ["103b03a53c0b5c0ddd885c0391c8"]
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "103b03a53c0b5c0ddd885c0391c8",
+    ///       "name": "Contracts",
+    ///       "color": "ff8800",
+    ///       "created_at": "2026-07-20T16:30:27Z",
+    ///       "updated_at": "2026-07-20T16:30:27Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn add_to_document<D: AsRef<str>, I, S>(
         &self,
         document_id: D,
@@ -238,6 +389,32 @@ impl<'a> TagsApi<'a> {
     /// Replace the full set of tag names on a document.
     ///
     /// `PUT /accounts/{account_id}/documents/{document_id}/tags`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "tags": ["103b03a53c0b5c0ddd885c0391c8"]
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "103b03a53c0b5c0ddd885c0391c8",
+    ///       "name": "Contracts",
+    ///       "color": "ff8800",
+    ///       "created_at": "2026-07-20T16:30:27Z",
+    ///       "updated_at": "2026-07-20T16:30:27Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn set_on_document<D: AsRef<str>, I, S>(
         &self,
         document_id: D,
@@ -263,6 +440,18 @@ impl<'a> TagsApi<'a> {
     /// Remove a single tag from a document.
     ///
     /// `DELETE /accounts/{account_id}/documents/{document_id}/tags/{tag_id}`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "detached": true
+    ///   }
+    /// }
+    /// ```
     pub async fn remove_from_document<D: AsRef<str>, T: AsRef<str>>(
         &self,
         document_id: D,

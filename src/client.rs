@@ -7,8 +7,8 @@ use crate::config::BaseUrl;
 use crate::error::{Error, Result};
 use crate::http::HttpClient;
 use crate::resources::{
-    ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, DocumentsApi, FieldsApi, PublicApi,
-    SignerSelfApi, SignersApi, TagsApi, TemplatesApi, WebhooksApi,
+    AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, DocumentsApi,
+    FieldsApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, WebhooksApi,
 };
 
 /// Default user-agent used by the SDK.
@@ -73,6 +73,17 @@ impl Client {
     /// password-reset requests).
     pub fn public(&self) -> PublicApi<'_> {
         PublicApi::new(&self.http)
+    }
+
+    /// Account-level endpoints: list the accounts the credential can see and
+    /// create new accounts.
+    pub fn accounts_api(&self) -> AccountsApi<'_> {
+        AccountsApi::new(&self.http)
+    }
+
+    /// Endpoints scoped to a single account (get, update, delete, theme, logo).
+    pub fn account<S: Into<String>>(&self, account_id: S) -> AccountApi<'_> {
+        AccountApi::new(&self.http, account_id.into())
     }
 
     /// Authentication helpers: login, password reset, change password,

@@ -12,6 +12,7 @@ The SDK is a 1:1 mapping of the public REST surface documented at
 | Surface          | Module                              |
 | ---------------- | ----------------------------------- |
 | Authentication   | [`Client::auth_api`]                |
+| Accounts         | [`Client::account`] / [`Client::accounts_api`] |
 | API keys         | [`Client::api_keys`]                |
 | Signers          | [`Client::signers`]                 |
 | Signer (self)    | [`Client::signer_self`]             |
@@ -25,6 +26,8 @@ The SDK is a 1:1 mapping of the public REST surface documented at
 | Public endpoints | [`Client::public`]                  |
 
 [`Client::auth_api`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.auth_api
+[`Client::account`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.account
+[`Client::accounts_api`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.accounts_api
 [`Client::api_keys`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.api_keys
 [`Client::signers`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.signers
 [`Client::signer_self`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.signer_self
@@ -179,7 +182,8 @@ println!("tag id: {}", tag.id);
 # Ok(()) }
 ```
 
-Document tag operations use tag names, matching the API reference:
+Document tag operations take **tag IDs** (the identifiers returned by
+`tags.create(...)` / `tags.list()`), matching the API reference:
 
 ```rust
 use assinafy::Client;
@@ -187,8 +191,33 @@ use assinafy::Client;
 # async fn run() -> assinafy::Result<()> {
 let client = Client::from_api_key("k")?;
 let tags = client.tags("acc_123");
-tags.add_to_document("doc_abc", ["Contracts", "Urgent"]).await?;
-tags.set_on_document("doc_abc", ["Signed"]).await?;
+tags.add_to_document("doc_abc", ["tag_id_1", "tag_id_2"]).await?;
+tags.set_on_document("doc_abc", ["tag_id_3"]).await?;
+# Ok(()) }
+```
+
+### Accounts
+
+```rust
+use assinafy::Client;
+use assinafy::resources::UpdateAccountBody;
+
+# async fn run() -> assinafy::Result<()> {
+let client = Client::from_api_key("k")?;
+
+// List the accounts this credential can see.
+for account in client.accounts_api().list().await? {
+    println!("{} ({})", account.name, account.id);
+}
+
+// Fetch and update one account, plus its branding theme.
+let account = client.account("acc_123").get().await?;
+client
+    .account("acc_123")
+    .update(&UpdateAccountBody::new().name("Renamed workspace"))
+    .await?;
+let theme = client.account("acc_123").theme().await?;
+println!("{} theme: {:?}", account.name, theme.primary_color);
 # Ok(()) }
 ```
 

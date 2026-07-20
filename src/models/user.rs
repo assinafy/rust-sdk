@@ -58,7 +58,9 @@ impl From<UserAccount> for Account {
             name: ua.name,
             roles: ua.roles,
             is_delete_allowed: ua.is_delete_allowed,
-            created_at: ua.created_at,
+            primary_color: None,
+            secondary_color: None,
+            created_at: Some(ua.created_at),
         }
     }
 }

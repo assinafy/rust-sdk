@@ -17,6 +17,17 @@ const DEFAULT_EVENTS: [&str; 5] = [
 ];
 
 /// Body for `PUT /accounts/{account_id}/webhooks/subscriptions`.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "url": "https://hooks.example.com/assinafy",
+///   "email": "bill@febacapital.com",
+///   "events": ["document_ready", "signer_signed_document"],
+///   "is_active": true
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterWebhookBody {
     /// Destination URL.
@@ -130,6 +141,35 @@ impl<'a> ListWebhookDispatchesRequest<'a> {
     }
 
     /// Execute the request.
+    ///
+    /// `GET /accounts/{account_id}/webhooks`.
+    ///
+    /// # Response payload
+    ///
+    /// A paginated list of dispatches; each item's `payload` mirrors the JSON
+    /// that was POSTed to the endpoint.
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "103a09cfce51319dd3b3f72ffcdf",
+    ///       "event": "signature_requested",
+    ///       "activity_id": 8629,
+    ///       "endpoint": "https://httpbin.org/anything",
+    ///       "payload": { "id": 8629, "event": "signature_requested", "object": {} },
+    ///       "delivered": true,
+    ///       "http_status": 200,
+    ///       "response_body": "{\"ok\": true}",
+    ///       "error": null,
+    ///       "created_at": "2026-07-15T20:04:36Z",
+    ///       "updated_at": "2026-07-15T20:04:36Z"
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn send(self) -> Result<Page<WebhookDispatch>> {
         let path = format!("accounts/{}/webhooks", self.account_id);
         let mut req = self.http.request(Method::GET, &path)?;
@@ -180,6 +220,33 @@ impl<'a> WebhooksApi<'a> {
     /// Create or replace the account webhook subscription.
     ///
     /// `PUT /accounts/{account_id}/webhooks/subscriptions`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "url": "https://hooks.example.com/assinafy",
+    ///   "email": "bill@febacapital.com",
+    ///   "events": ["document_ready", "signer_signed_document"],
+    ///   "is_active": true
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "events": ["document_ready", "signer_signed_document"],
+    ///     "is_active": true,
+    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "email": "bill@febacapital.com",
+    ///     "updated_at": "2026-07-18T02:36:02Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn register(&self, body: &RegisterWebhookBody) -> Result<WebhookSubscription> {
         let path = format!("accounts/{}/webhooks/subscriptions", self.account_id);
         let req = self.http.request(Method::PUT, &path)?.json(body);
@@ -189,26 +256,52 @@ impl<'a> WebhooksApi<'a> {
     /// Fetch the current webhook subscription.
     ///
     /// `GET /accounts/{account_id}/webhooks/subscriptions`.
+    ///
+    /// # Response payload
+    ///
+    /// `data` is `null` when no subscription has been registered.
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "events": ["document_ready", "signer_signed_document"],
+    ///     "is_active": false,
+    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "email": "bill@febacapital.com",
+    ///     "updated_at": "2026-07-18T02:36:02Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn get_subscription(&self) -> Result<Option<WebhookSubscription>> {
         let path = format!("accounts/{}/webhooks/subscriptions", self.account_id);
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
 
-    /// Delete the current webhook subscription.
+    /// Stop delivering webhook events without discarding the subscription.
     ///
-    /// `DELETE /accounts/{account_id}/webhooks/subscriptions`. The API echoes
-    /// the deleted subscription object; it is discarded here. Use
-    /// [`get_subscription`](Self::get_subscription) beforehand if you need it.
-    pub async fn delete_subscription(&self) -> Result<()> {
-        let path = format!("accounts/{}/webhooks/subscriptions", self.account_id);
-        let req = self.http.request(Method::DELETE, &path)?;
-        self.http.send_no_content(req).await
-    }
-
-    /// Inactivate the current subscription without deleting it.
+    /// `PUT /accounts/{account_id}/webhooks/inactivate`. This is the documented
+    /// way to disable a webhook — the API has no delete-subscription route
+    /// (a `DELETE` on `.../webhooks/subscriptions` returns `404`). To re-enable
+    /// delivery, call [`register`](Self::register) with `is_active = true`.
     ///
-    /// `PUT /accounts/{account_id}/webhooks/inactivate`.
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "events": ["document_ready", "signer_signed_document"],
+    ///     "is_active": false,
+    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "email": "bill@febacapital.com",
+    ///     "updated_at": "2026-07-18T02:36:02Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn inactivate(&self) -> Result<WebhookSubscription> {
         let path = format!("accounts/{}/webhooks/inactivate", self.account_id);
         let req = self.http.request(Method::PUT, &path)?;
@@ -218,6 +311,25 @@ impl<'a> WebhooksApi<'a> {
     /// List supported webhook event types.
     ///
     /// `GET /webhooks/event-types`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "document_uploaded",
+    ///       "description": "Triggered when the User has uploaded a Document"
+    ///     },
+    ///     {
+    ///       "id": "document_metadata_ready",
+    ///       "description": "Triggered when the document is ready to be prepared."
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn event_types(&self) -> Result<Vec<WebhookEventTypeInfo>> {
         let req = self.http.request(Method::GET, "webhooks/event-types")?;
         self.http.send_envelope(req).await
@@ -244,6 +356,31 @@ impl<'a> WebhooksApi<'a> {
     /// Retry one webhook dispatch.
     ///
     /// `POST /accounts/{account_id}/webhooks/{dispatch_id}/retry`.
+    ///
+    /// # Response payload
+    ///
+    /// The re-delivered dispatch, with refreshed `delivered`, `http_status`,
+    /// `response_body`, `error`, and `updated_at`.
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "id": "103a09cfce51319dd3b3f72ffcdf",
+    ///     "event": "signature_requested",
+    ///     "activity_id": 8629,
+    ///     "endpoint": "https://httpbin.org/anything",
+    ///     "payload": { "id": 8629, "event": "signature_requested", "object": {} },
+    ///     "delivered": true,
+    ///     "http_status": 200,
+    ///     "response_body": "{\"ok\": true}",
+    ///     "error": null,
+    ///     "created_at": "2026-07-15T20:04:36Z",
+    ///     "updated_at": "2026-07-15T20:04:36Z"
+    ///   }
+    /// }
+    /// ```
     pub async fn retry_dispatch<S: AsRef<str>>(&self, dispatch_id: S) -> Result<WebhookDispatch> {
         let path = format!(
             "accounts/{}/webhooks/{}/retry",

@@ -365,6 +365,122 @@ fn assignment_body_omits_undocumented_top_level_methods() {
 }
 
 #[test]
+fn account_decodes_list_and_by_id_shapes() {
+    use assinafy::models::Account;
+    // List shape: roles + is_delete_allowed, no colors.
+    let list = r#"{"id":"acc1","name":"MT","roles":["owner"],"is_delete_allowed":true,"created_at":"2026-05-12T18:05:11Z"}"#;
+    let a: Account = serde_json::from_str(list).unwrap();
+    assert_eq!(a.id, "acc1");
+    assert_eq!(a.roles, vec!["owner".to_string()]);
+    assert!(a.is_delete_allowed);
+    assert_eq!(a.primary_color, None);
+
+    // By-id shape: colors present (possibly null), no roles.
+    let by_id = r#"{"id":"acc1","name":"MT","primary_color":"2072b9","secondary_color":null,"created_at":"2026-05-12T18:05:11Z"}"#;
+    let a: Account = serde_json::from_str(by_id).unwrap();
+    assert_eq!(a.primary_color.as_deref(), Some("2072b9"));
+    assert_eq!(a.secondary_color, None);
+    assert!(a.roles.is_empty());
+}
+
+#[test]
+fn account_theme_decodes_live_shape() {
+    use assinafy::models::AccountTheme;
+    let body =
+        r#"{"account_name":"MT","primary_color":"2072b9","secondary_color":"ffffff","logo":null}"#;
+    let t: AccountTheme = serde_json::from_str(body).unwrap();
+    assert_eq!(t.account_name.as_deref(), Some("MT"));
+    assert_eq!(t.primary_color.as_deref(), Some("2072b9"));
+    assert_eq!(t.logo, None);
+}
+
+#[test]
+fn create_account_body_and_sender_type_serialize() {
+    use assinafy::resources::{CreateAccountBody, NotificationSenderType};
+    let json = serde_json::to_value(
+        CreateAccountBody::new("Acme").notification_sender_type(NotificationSenderType::Account),
+    )
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "name": "Acme", "notification_sender_type": "Account" })
+    );
+    // Omitted when unset.
+    let json = serde_json::to_value(CreateAccountBody::new("Acme")).unwrap();
+    assert_eq!(json, serde_json::json!({ "name": "Acme" }));
+}
+
+#[test]
+fn signer_self_decodes_is_signature_reusable() {
+    use assinafy::models::SignerSelf;
+    let body = r#"{"resource":"signer","id":"s1","full_name":"Bill","email":"b@e.com",
+        "whatsapp_phone_number":null,"has_accepted_terms":true,
+        "has_signature":true,"has_initial":false,"is_signature_reusable":true}"#;
+    let s: SignerSelf = serde_json::from_str(body).unwrap();
+    assert!(s.has_signature);
+    assert!(s.is_signature_reusable);
+    // Older payloads without the flag default to false.
+    let older = r#"{"id":"s1","full_name":"Bill","has_signature":false,"has_initial":false}"#;
+    let s: SignerSelf = serde_json::from_str(older).unwrap();
+    assert!(!s.is_signature_reusable);
+}
+
+#[test]
+fn assignment_summary_signer_decodes_whatsapp() {
+    use assinafy::models::AssignmentSummarySigner;
+    let body = r#"{"id":"s1","full_name":"Ada","email":"ada@e.com",
+        "whatsapp_phone_number":"+5548999990000","has_accepted_terms":false,"completed":false}"#;
+    let s: AssignmentSummarySigner = serde_json::from_str(body).unwrap();
+    assert_eq!(s.whatsapp_phone_number.as_deref(), Some("+5548999990000"));
+    assert!(!s.completed);
+}
+
+#[test]
+fn resend_cost_estimate_decodes_live_shape() {
+    use assinafy::models::ResendCostEstimate;
+    let body = r#"{"total":0,"breakdown":[{"code":"NotificationEmailResend",
+        "name":"Email Notification Resend","cost":0}],
+        "credit_balance":0,"has_sufficient_credits":true}"#;
+    let e: ResendCostEstimate = serde_json::from_str(body).unwrap();
+    assert_eq!(e.total, 0.0);
+    assert_eq!(e.breakdown.len(), 1);
+    assert_eq!(e.breakdown[0].code, "NotificationEmailResend");
+    assert!(e.has_sufficient_credits);
+}
+
+#[test]
+fn confirm_data_body_emits_government_id() {
+    let json = serde_json::to_value(
+        ConfirmSignerDataBody::new()
+            .full_name("Maria")
+            .government_id("123.456.789-09"),
+    )
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "full_name": "Maria", "government_id": "123.456.789-09" })
+    );
+}
+
+#[test]
+fn api_error_exposes_retry_after_field() {
+    // The rate-limit path populates `retry_after`; it round-trips via serde and
+    // is omitted when absent.
+    let with = assinafy::ApiError {
+        status: 429,
+        message: "Too Many Requests".into(),
+        data: serde_json::Value::Null,
+        retry_after: Some(50),
+    };
+    let json = serde_json::to_value(&with).unwrap();
+    assert_eq!(json["retry_after"], 50);
+
+    let without = r#"{"status":404,"message":"x","data":null}"#;
+    let e: assinafy::ApiError = serde_json::from_str(without).unwrap();
+    assert_eq!(e.retry_after, None);
+}
+
+#[test]
 fn template_document_body_serializes_only_documented_fields() {
     use assinafy::resources::{
         CreateDocumentFromTemplateBody, EditorField, TemplateDocumentSigner,

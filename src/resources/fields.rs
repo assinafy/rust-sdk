@@ -8,6 +8,18 @@ use crate::http::HttpClient;
 use crate::models::{FieldDefinition, FieldType, FieldValidationResult};
 
 /// Body for `POST /accounts/{account_id}/fields`.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "type": "text",
+///   "name": "Full name",
+///   "regex": "^.{2,}$",
+///   "is_required": false,
+///   "is_active": true
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateFieldBody {
     /// Field type identifier.
@@ -62,6 +74,21 @@ impl CreateFieldBody {
 }
 
 /// Body for `PUT /accounts/{account_id}/fields/{field_id}`.
+///
+/// Only the fields that are set are serialized. A `regex` of `null` clears the
+/// stored expression.
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "type": "text",
+///   "name": "Full name (updated)",
+///   "regex": null,
+///   "is_required": true,
+///   "is_active": true
+/// }
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateFieldBody {
     /// New field type identifier.
@@ -125,6 +152,18 @@ impl UpdateFieldBody {
 }
 
 /// Entry for `POST /accounts/{account_id}/fields/validate-multiple`.
+///
+/// The endpoint accepts a JSON array of these entries. A single entry
+/// serializes as:
+///
+/// # Request payload
+///
+/// ```json
+/// {
+///   "field_id": "102d25a48bf5816b9029b0ca6043",
+///   "value": "400.676.228-36"
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidateFieldEntry {
     /// Field definition identifier.
@@ -172,6 +211,32 @@ impl<'a> ListFieldsRequest<'a> {
     }
 
     /// Execute the request.
+    ///
+    /// `GET /accounts/{account_id}/fields`. Returns a bare (non-paginated)
+    /// array of field definitions.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "id": "102d25a48bec03ebcf3b5f651998",
+    ///       "name": "Nome",
+    ///       "type": "personName",
+    ///       "regex": null,
+    ///       "is_pre_defined": true,
+    ///       "is_active": true,
+    ///       "is_required": false,
+    ///       "is_standard": false,
+    ///       "is_read_only": false,
+    ///       "is_visible": true
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn send(self) -> Result<Vec<FieldDefinition>> {
         let path = format!("accounts/{}/fields", self.account_id);
         let mut req = self.http.request(Method::GET, &path)?;
@@ -204,6 +269,39 @@ impl<'a> FieldsApi<'a> {
     /// Create a field definition.
     ///
     /// `POST /accounts/{account_id}/fields`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "type": "text",
+    ///   "name": "Full name",
+    ///   "is_required": false,
+    ///   "is_active": true
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "field_definition",
+    ///     "id": "103b03a56d52a4bea540f9af20a8",
+    ///     "name": "Full name",
+    ///     "type": "text",
+    ///     "regex": null,
+    ///     "is_pre_defined": false,
+    ///     "is_active": true,
+    ///     "is_required": false,
+    ///     "is_standard": false,
+    ///     "is_read_only": false,
+    ///     "is_visible": true
+    ///   }
+    /// }
+    /// ```
     pub async fn create(&self, body: &CreateFieldBody) -> Result<FieldDefinition> {
         let path = format!("accounts/{}/fields", self.account_id);
         let req = self.http.request(Method::POST, &path)?.json(body);
@@ -226,6 +324,28 @@ impl<'a> FieldsApi<'a> {
     /// Retrieve a field definition.
     ///
     /// `GET /accounts/{account_id}/fields/{field_id}`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "field_definition",
+    ///     "id": "103b03a56d52a4bea540f9af20a8",
+    ///     "name": "AuditField",
+    ///     "type": "text",
+    ///     "regex": null,
+    ///     "is_pre_defined": false,
+    ///     "is_active": true,
+    ///     "is_required": false,
+    ///     "is_standard": false,
+    ///     "is_read_only": false,
+    ///     "is_visible": true
+    ///   }
+    /// }
+    /// ```
     pub async fn get<S: AsRef<str>>(&self, field_id: S) -> Result<FieldDefinition> {
         let path = format!("accounts/{}/fields/{}", self.account_id, field_id.as_ref());
         let req = self.http.request(Method::GET, &path)?;
@@ -235,6 +355,38 @@ impl<'a> FieldsApi<'a> {
     /// Update a field definition.
     ///
     /// `PUT /accounts/{account_id}/fields/{field_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "name": "Full name (updated)",
+    ///   "regex": null,
+    ///   "is_active": true
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "field_definition",
+    ///     "id": "103b03a56d52a4bea540f9af20a8",
+    ///     "name": "Full name (updated)",
+    ///     "type": "text",
+    ///     "regex": null,
+    ///     "is_pre_defined": false,
+    ///     "is_active": true,
+    ///     "is_required": false,
+    ///     "is_standard": false,
+    ///     "is_read_only": false,
+    ///     "is_visible": true
+    ///   }
+    /// }
+    /// ```
     pub async fn update<S: AsRef<str>>(
         &self,
         field_id: S,
@@ -248,6 +400,16 @@ impl<'a> FieldsApi<'a> {
     /// Delete a field definition.
     ///
     /// `DELETE /accounts/{account_id}/fields/{field_id}`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": []
+    /// }
+    /// ```
     pub async fn delete<S: AsRef<str>>(&self, field_id: S) -> Result<()> {
         let path = format!("accounts/{}/fields/{}", self.account_id, field_id.as_ref());
         let req = self.http.request(Method::DELETE, &path)?;
@@ -261,6 +423,28 @@ impl<'a> FieldsApi<'a> {
     /// context — for the latter, build the client with
     /// [`Auth::AccessCode`](crate::Auth::AccessCode) and the
     /// `signer-access-code` query parameter is sent automatically.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {
+    ///   "value": "400.676.228-36"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "type": "text",
+    ///     "success": true,
+    ///     "error_message": ""
+    ///   }
+    /// }
+    /// ```
     pub async fn validate<S: AsRef<str>>(
         &self,
         field_id: S,
@@ -281,6 +465,42 @@ impl<'a> FieldsApi<'a> {
     /// Validate multiple field values.
     ///
     /// `POST /accounts/{account_id}/fields/validate-multiple`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// [
+    ///   {
+    ///     "field_id": "102d25a48bf5816b9029b0ca6043",
+    ///     "value": "400.676.228-36"
+    ///   },
+    ///   {
+    ///     "field_id": "102d25a48c0e2d4e79477d673896",
+    ///     "value": "signer@example.com"
+    ///   }
+    /// ]
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     {
+    ///       "type": "cpf",
+    ///       "success": true,
+    ///       "error_message": ""
+    ///     },
+    ///     {
+    ///       "type": "email",
+    ///       "success": true,
+    ///       "error_message": ""
+    ///     }
+    ///   ]
+    /// }
+    /// ```
     pub async fn validate_multiple<I>(&self, entries: I) -> Result<Vec<FieldValidationResult>>
     where
         I: IntoIterator<Item = ValidateFieldEntry>,
@@ -294,6 +514,19 @@ impl<'a> FieldsApi<'a> {
     /// List supported field types.
     ///
     /// `GET /field-types`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": [
+    ///     { "type": "personName", "name": "Nome" },
+    ///     { "type": "text", "name": "Texto" }
+    ///   ]
+    /// }
+    /// ```
     pub async fn list_types(&self) -> Result<Vec<FieldType>> {
         let req = self.http.request(Method::GET, "field-types")?;
         self.http.send_envelope(req).await

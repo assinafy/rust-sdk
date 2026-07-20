@@ -57,6 +57,21 @@ impl Error {
             _ => None,
         }
     }
+
+    /// Returns `true` if this is an API error with HTTP status `429 Too Many
+    /// Requests`. The Assinafy API rate-limits requests (see the
+    /// `X-Rate-Limit-*` response headers); use [`retry_after`](Error::retry_after)
+    /// to learn how long to wait before retrying.
+    pub fn is_rate_limited(&self) -> bool {
+        self.status() == Some(429)
+    }
+
+    /// Returns the number of seconds to wait before retrying, when the server
+    /// provided a `Retry-After` or `X-Rate-Limit-Reset` header on a failed
+    /// response.
+    pub fn retry_after(&self) -> Option<u64> {
+        self.api().and_then(|e| e.retry_after)
+    }
 }
 
 /// Structured payload returned by the Assinafy API for non-2xx responses.
@@ -71,9 +86,16 @@ pub struct ApiError {
     pub status: u16,
     /// Human-readable error message from the server.
     pub message: String,
-    /// Optional structured details (validation errors, hints, etc.).
+    /// Optional structured details (validation errors, hints, etc.). For a
+    /// "route not found" response (as opposed to a missing resource) this
+    /// preserves the server's raw `{ name, code, ... }` body so callers can
+    /// distinguish the two.
     #[serde(default)]
     pub data: serde_json::Value,
+    /// Seconds to wait before retrying, parsed from the `Retry-After` or
+    /// `X-Rate-Limit-Reset` response header when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<u64>,
 }
 
 impl fmt::Display for ApiError {

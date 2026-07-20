@@ -251,6 +251,9 @@ pub struct AssignmentSummarySigner {
     /// Email address.
     #[serde(default)]
     pub email: Option<String>,
+    /// WhatsApp phone number (E.164), when the signer has one.
+    #[serde(default)]
+    pub whatsapp_phone_number: Option<String>,
     /// Whether the signer accepted the terms.
     #[serde(default)]
     pub has_accepted_terms: bool,
