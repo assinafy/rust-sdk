@@ -30,17 +30,23 @@ pub enum TemplateStatus {
     Unknown(String),
 }
 
-impl fmt::Display for TemplateStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
+impl TemplateStatus {
+    /// Returns the wire-format string.
+    pub fn as_str(&self) -> &str {
+        match self {
             TemplateStatus::Uploading => "uploading",
             TemplateStatus::Uploaded => "uploaded",
             TemplateStatus::Processing => "processing",
             TemplateStatus::Ready => "ready",
             TemplateStatus::Failed => "failed",
             TemplateStatus::Unknown(s) => s.as_str(),
-        };
-        f.write_str(s)
+        }
+    }
+}
+
+impl fmt::Display for TemplateStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

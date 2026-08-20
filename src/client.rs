@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 use crate::http::HttpClient;
 use crate::resources::{
     AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, DocumentsApi,
-    FieldsApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, WebhooksApi,
+    FieldsApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, UsersApi, WebhooksApi,
 };
 
 /// Default user-agent used by the SDK.
@@ -69,8 +69,12 @@ impl Client {
         self.http.base_url()
     }
 
-    /// Access the public, unauthenticated endpoints (verify, public docs,
-    /// password-reset requests).
+    /// Access the public, unauthenticated endpoints: public document
+    /// metadata and the signer access-token send request.
+    ///
+    /// Document verification lives on
+    /// [`documents()`](Self::documents), and password resets on
+    /// [`auth_api()`](Self::auth_api).
     pub fn public(&self) -> PublicApi<'_> {
         PublicApi::new(&self.http)
     }
@@ -95,6 +99,11 @@ impl Client {
     /// API-key management for the authenticated user.
     pub fn api_keys(&self) -> ApiKeysApi<'_> {
         ApiKeysApi::new(&self.http)
+    }
+
+    /// Endpoints for the authenticated user (`GET /users/self`).
+    pub fn users(&self) -> UsersApi<'_> {
+        UsersApi::new(&self.http)
     }
 
     /// Signer management within an account.
@@ -141,11 +150,6 @@ impl Client {
     /// Document activity log endpoints.
     pub fn activities(&self) -> ActivitiesApi<'_> {
         ActivitiesApi::new(&self.http)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn http(&self) -> &HttpClient {
-        &self.http
     }
 }
 
@@ -249,8 +253,22 @@ impl ClientBuilder {
 
     /// Supply your own pre-configured [`reqwest::Client`]. The client must
     /// support the features the SDK relies on (`json`, `multipart`, `stream`).
-    /// Other builder options that configure the underlying HTTP client
-    /// (timeouts, user agent) are ignored when this is set.
+    ///
+    /// Only [`ClientBuilder::timeout`]/[`ClientBuilder::connect_timeout`] are
+    /// bypassed when this is set (they configure `reqwest::Client` itself, so
+    /// your own client's settings win). The SDK still sets its own
+    /// `User-Agent` header (the default, or your [`ClientBuilder::user_agent`]
+    /// override) explicitly on every request — via `RequestBuilder::header`,
+    /// which always overrides a client-level default — so a `User-Agent`
+    /// configured on the supplied `reqwest::Client` itself has no effect. Use
+    /// [`ClientBuilder::user_agent`] if you need a custom value.
+    ///
+    /// The SDK-owned HTTP client disables automatic redirects and the `Referer`
+    /// header. Binary downloads follow redirects through the SDK's controlled
+    /// path, which sends credentials only to the configured API origin. A
+    /// custom client bypasses those safeguards; configure it with
+    /// [`reqwest::redirect::Policy::none`] (or a strict same-origin policy) and
+    /// call `reqwest::ClientBuilder::referer(false)`.
     pub fn http_client(mut self, client: reqwest::Client) -> Self {
         self.http_client = Some(client);
         self
@@ -269,6 +287,8 @@ impl ClientBuilder {
             None => {
                 let builder = reqwest::Client::builder()
                     .user_agent(&user_agent)
+                    .referer(false)
+                    .redirect(reqwest::redirect::Policy::none())
                     .timeout(self.timeout.unwrap_or_else(|| Duration::from_secs(60)))
                     .connect_timeout(
                         self.connect_timeout
@@ -283,5 +303,74 @@ impl ClientBuilder {
         Ok(Client {
             http: HttpClient::new(http, base, auth, user_agent),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    use super::*;
+
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        let mut request = [0_u8; 2048];
+        let read = stream.read(&mut request).unwrap();
+        String::from_utf8_lossy(&request[..read]).into_owned()
+    }
+
+    #[tokio::test]
+    async fn binary_redirects_follow_without_forwarding_credentials() {
+        let target_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let target_address = target_listener.local_addr().unwrap();
+        let target = thread::spawn(move || {
+            let (mut stream, _) = target_listener.accept().unwrap();
+            let request = read_request(&mut stream);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 3\r\nConnection: close\r\n\r\nPNG",
+                )
+                .unwrap();
+            request
+        });
+
+        let api_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let api_address = api_listener.local_addr().unwrap();
+        let api = thread::spawn(move || {
+            let (mut stream, _) = api_listener.accept().unwrap();
+            let request = read_request(&mut stream);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/artifact\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            request
+        });
+
+        let base = BaseUrl::custom(format!("http://{api_address}/v1")).unwrap();
+        let client = Client::builder()
+            .base_url(base)
+            .api_key("sentinel-api-key")
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+
+        let (body, content_type) = client
+            .documents()
+            .download_thumbnail("document-id")
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"PNG");
+        assert_eq!(content_type, "image/png");
+
+        let api_request = api.join().unwrap().to_ascii_lowercase();
+        assert!(api_request.contains("x-api-key: sentinel-api-key"));
+        let target_request = target.join().unwrap().to_ascii_lowercase();
+        assert!(!target_request.contains("sentinel-api-key"));
+        assert!(!target_request.contains("referer:"));
     }
 }

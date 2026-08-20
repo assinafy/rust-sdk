@@ -25,11 +25,12 @@ mod signer_self;
 mod signers;
 mod tags;
 mod templates;
+mod users;
 mod webhooks;
 
 pub use accounts::{
-    AccountApi, AccountsApi, CreateAccountBody, NotificationSenderType, UpdateAccountBody,
-    UploadLogoRequest,
+    AccountApi, AccountsApi, CreateAccountBody, DocumentStatsQuery, NotificationSenderType,
+    UpdateAccountBody, UploadLogoRequest,
 };
 pub use activities::ActivitiesApi;
 pub use api_keys::{ApiKeyResponse, ApiKeysApi, CreateApiKeyBody};
@@ -38,8 +39,8 @@ pub use assignments::{
     EstimateAssignmentCostBody, ListAssignmentsRequest,
 };
 pub use auth::{
-    AuthApi, ChangePasswordBody, LinkSocialLoginBody, LoginBody, RequestPasswordResetBody,
-    ResetPasswordBody, SocialLoginBody,
+    AuthApi, ChangePasswordBody, EmailResult, LinkSocialLoginBody, LoginBody,
+    RequestPasswordResetBody, ResetPasswordBody, SocialLoginBody,
 };
 pub use documents::{
     DocumentsApi, ListDocumentsRequest, SearchDocumentsRequest, UploadDocumentRequest,
@@ -47,7 +48,7 @@ pub use documents::{
 pub use fields::{
     CreateFieldBody, FieldsApi, ListFieldsRequest, UpdateFieldBody, ValidateFieldEntry,
 };
-pub use public::{PublicApi, SendTokenBody, SendTokenResult};
+pub use public::{LegacySendTokenBody, PublicApi, SendTokenBody, SendTokenResult};
 pub use signer_self::{
     ConfirmSignerDataBody, DeclineMultipleDocumentsBody, ListSignerDocumentsRequest,
     SignMultipleDocumentsBody, SignerSelfApi, VerifyCodeBody,
@@ -58,4 +59,5 @@ pub use templates::{
     CreateDocumentFromTemplateBody, CreateTemplateRequest, EditorField, EstimateTemplateCostBody,
     ListTemplatesRequest, TemplateDocumentSigner, TemplateRoleBinding, TemplatesApi,
 };
+pub use users::{UpdateNotificationPreferencesBody, UsersApi};
 pub use webhooks::{ListWebhookDispatchesRequest, RegisterWebhookBody, WebhooksApi};

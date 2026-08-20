@@ -86,6 +86,9 @@ pub struct DocumentPage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct DeclinedBy {
+    /// Resource discriminator (always `"signer"` when present).
+    #[serde(default)]
+    pub resource: Option<String>,
     /// Identifier of the declining signer/user.
     pub id: String,
     /// Full name, when available.
@@ -94,15 +97,12 @@ pub struct DeclinedBy {
     /// Email, when available.
     #[serde(default)]
     pub email: Option<String>,
-}
-
-/// A downloadable artifact reference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Artifact {
-    /// Artifact name (`"original"`, `"certificated"`, etc.).
-    pub name: String,
-    /// Pre-signed download URL.
-    pub url: String,
+    /// WhatsApp phone number in E.164 format, when available.
+    #[serde(default)]
+    pub whatsapp_phone_number: Option<String>,
+    /// Whether the signer has accepted the platform terms.
+    #[serde(default)]
+    pub has_accepted_terms: bool,
 }
 
 /// Well-known artifact names. Custom names are accepted via
@@ -115,6 +115,8 @@ pub enum ArtifactName {
     Certificated,
     /// Standalone certificate page.
     CertificatePage,
+    /// PAdES-compliant signed PDF.
+    Pades,
     /// Bundle containing the certificated PDF and audit trail.
     Bundle,
     /// Thumbnail image.
@@ -130,6 +132,7 @@ impl ArtifactName {
             ArtifactName::Original => "original",
             ArtifactName::Certificated => "certificated",
             ArtifactName::CertificatePage => "certificate-page",
+            ArtifactName::Pades => "pades",
             ArtifactName::Bundle => "bundle",
             ArtifactName::Thumbnail => "thumbnail",
             ArtifactName::Other(s) => s.as_str(),
@@ -149,10 +152,17 @@ impl From<&str> for ArtifactName {
             "original" => ArtifactName::Original,
             "certificated" => ArtifactName::Certificated,
             "certificate-page" => ArtifactName::CertificatePage,
+            "pades" => ArtifactName::Pades,
             "bundle" => ArtifactName::Bundle,
             "thumbnail" => ArtifactName::Thumbnail,
             other => ArtifactName::Other(other.to_owned()),
         }
+    }
+}
+
+impl From<String> for ArtifactName {
+    fn from(s: String) -> Self {
+        ArtifactName::from(s.as_str())
     }
 }
 
@@ -268,8 +278,11 @@ pub struct DocumentVerification {
 }
 
 /// Public, unauthenticated view of a document returned by
-/// `GET /public/documents/{document_id}` and embedded in
-/// [`SendTokenResult`](crate::resources::SendTokenResult).
+/// `GET /public/documents/{document_id}`.
+///
+/// The current API documents the full [`Document`] shape. All fields other
+/// than `id` and `name` remain optional here because older deployments return
+/// only `resource`, `id`, `name`, `page_count`, and `created_by`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PublicDocument {
@@ -278,12 +291,55 @@ pub struct PublicDocument {
     pub resource: Option<String>,
     /// Document identifier.
     pub id: String,
+    /// Owning account identifier, when included.
+    #[serde(default)]
+    pub account_id: Option<String>,
+    /// Source template identifier, when included.
+    #[serde(default)]
+    pub template_id: Option<String>,
     /// Document file name.
     pub name: String,
+    /// Current document status, when included.
+    #[serde(default)]
+    pub status: Option<DocumentStatus>,
+    /// Downloadable artifacts keyed by artifact name.
+    #[serde(default)]
+    pub artifacts: BTreeMap<String, String>,
+    /// Pages within the document.
+    #[serde(default)]
+    pub pages: Vec<DocumentPage>,
+    /// Expanded assignment, when included.
+    #[serde(default)]
+    pub assignment: Option<Assignment>,
+    /// Whether the document is closed, when included.
+    #[serde(default)]
+    pub is_closed: Option<bool>,
+    /// Signing URL, when available.
+    #[serde(default)]
+    pub signing_url: Option<String>,
+    /// Decline reason, when the document was declined.
+    #[serde(default)]
+    pub decline_reason: Option<String>,
+    /// Identity of the signer or user that declined the document.
+    #[serde(default)]
+    pub declined_by: Option<DeclinedBy>,
+    /// Tags attached to the document.
+    #[serde(default)]
+    pub tags: Vec<Tag>,
+    /// Creation timestamp (ISO-8601 string or Unix epoch number).
+    #[serde(default)]
+    pub created_at: Option<serde_json::Value>,
+    /// Last-modification timestamp.
+    #[serde(default)]
+    pub updated_at: Option<serde_json::Value>,
     /// Page count as reported by the API (a string such as `"1"`).
+    ///
+    /// This legacy field is absent from the current document schema.
     #[serde(default)]
     pub page_count: Option<String>,
     /// Display name of the user that created the document.
+    ///
+    /// This legacy field is absent from the current document schema.
     #[serde(default)]
     pub created_by: Option<String>,
 }

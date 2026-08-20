@@ -31,30 +31,41 @@ impl BaseUrl {
     /// Sandbox base URL.
     pub const SANDBOX: &'static str = "https://sandbox.assinafy.com.br/v1";
 
-    /// Parse a custom base URL. A trailing slash is appended if missing so
-    /// that relative joins behave consistently.
+    /// Parse a custom base URL. Its path is normalized to end with `/` (if
+    /// missing) so that relative joins behave consistently; any query
+    /// string or fragment is left untouched.
     pub fn custom<S: AsRef<str>>(url: S) -> Result<Self> {
-        let mut s = url.as_ref().to_owned();
-        if !s.ends_with('/') {
-            s.push('/');
-        }
-        let parsed = Url::parse(&s)
+        let parsed = Url::parse(url.as_ref())
             .map_err(|e| Error::Config(format!("invalid base url `{}`: {e}", url.as_ref())))?;
-        Ok(BaseUrl::Custom(parsed))
+        Ok(BaseUrl::Custom(normalize_path_trailing_slash(parsed)))
     }
 
-    /// Returns the URL representation used for relative joins. The URL is
-    /// guaranteed to end with `/`.
+    /// Returns the URL representation used for relative joins. The URL's
+    /// path is guaranteed to end with `/`.
     pub fn as_url(&self) -> Url {
         let raw = match self {
             BaseUrl::Production => Self::PRODUCTION,
             BaseUrl::Sandbox => Self::SANDBOX,
-            BaseUrl::Custom(u) => return u.clone(),
+            // Normalize here too, not just in `custom()`: `Custom` is a
+            // public tuple variant and callers can build one directly with
+            // an arbitrary `Url` that skips `custom()` entirely.
+            BaseUrl::Custom(u) => return normalize_path_trailing_slash(u.clone()),
         };
         let mut s = raw.to_owned();
         s.push('/');
         Url::parse(&s).expect("static base url parses")
     }
+}
+
+/// Ensures `u`'s path ends with `/`, leaving any query string or fragment
+/// untouched (unlike string-concatenation, which can splice the slash into
+/// whichever of those happens to be present).
+fn normalize_path_trailing_slash(mut u: Url) -> Url {
+    if !u.path().ends_with('/') {
+        let path = format!("{}/", u.path());
+        u.set_path(&path);
+    }
+    u
 }
 
 impl fmt::Display for BaseUrl {

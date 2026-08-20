@@ -5,9 +5,9 @@ use assinafy::models::{
     VerificationMethod,
 };
 use assinafy::resources::{
-    ApiKeyResponse, ConfirmSignerDataBody, CreateAssignmentBody, CreateAssignmentSigner, LoginBody,
-    RequestPasswordResetBody, SendTokenBody, SocialLoginBody, TemplateDocumentSigner,
-    UpdateTagBody, VerifyCodeBody,
+    ApiKeyResponse, ConfirmSignerDataBody, CreateAssignmentBody, CreateAssignmentSigner,
+    EmailResult, LoginBody, RequestPasswordResetBody, SendTokenBody, SocialLoginBody,
+    TemplateDocumentSigner, UpdateTagBody, VerifyCodeBody,
 };
 use assinafy::{Auth, BaseUrl, Client, Envelope};
 
@@ -27,6 +27,26 @@ fn base_url_custom_normalises_trailing_slash() {
     let u = BaseUrl::custom("https://example.test/api").unwrap();
     let joined = u.as_url().join("docs/statuses").unwrap();
     assert_eq!(joined.as_str(), "https://example.test/api/docs/statuses");
+}
+
+#[test]
+fn base_url_custom_normalises_path_not_query_or_fragment() {
+    let u = BaseUrl::custom("https://example.test/api?tenant=1").unwrap();
+    let joined = u.as_url().join("docs").unwrap();
+    assert_eq!(joined.path(), "/api/docs");
+
+    let u = BaseUrl::custom("https://example.test/api#v2").unwrap();
+    let joined = u.as_url().join("docs").unwrap();
+    assert_eq!(joined.path(), "/api/docs");
+}
+
+#[test]
+fn base_url_direct_custom_construction_is_also_normalised() {
+    // `BaseUrl::Custom` is a public tuple variant — callers can build one
+    // directly with a `Url` that never went through `custom()`.
+    let u = BaseUrl::Custom(url::Url::parse("https://example.test/api").unwrap());
+    let joined = u.as_url().join("docs").unwrap();
+    assert_eq!(joined.path(), "/api/docs");
 }
 
 #[test]
@@ -62,9 +82,33 @@ fn assignment_method_serializes_lowercase() {
 #[test]
 fn verification_and_notification_methods_use_capitalised_strings() {
     assert_eq!(VerificationMethod::Email.as_str(), "Email");
+    assert_eq!(
+        VerificationMethod::DigitalCertificate.as_str(),
+        "DigitalCertificate"
+    );
     assert_eq!(NotificationMethod::Whatsapp.as_str(), "Whatsapp");
     let v: VerificationMethod = serde_json::from_str("\"Email\"").unwrap();
     assert_eq!(v, VerificationMethod::Email);
+}
+
+#[test]
+fn assignment_item_accepts_compact_api_objects() {
+    let item: assinafy::models::AssignmentItem = serde_json::from_value(serde_json::json!({
+        "id": "item_1",
+        "page": null,
+        "signer": { "id": "signer_1" },
+        "field": { "id": "field_1", "type": "signature" },
+        "display_settings": [],
+        "value": null,
+        "completed": false
+    }))
+    .unwrap();
+
+    assert_eq!(item.signer.as_ref().unwrap().id, "signer_1");
+    assert_eq!(
+        item.field.as_ref().unwrap().kind.as_deref(),
+        Some("signature")
+    );
 }
 
 #[test]
@@ -75,15 +119,21 @@ fn artifact_name_round_trip() {
         ArtifactName::Other("custom-thing".into())
     );
     assert_eq!(ArtifactName::Certificated.as_str(), "certificated");
+    assert_eq!(ArtifactName::from("pades"), ArtifactName::Pades);
+    // `From<String>` (not just `From<&str>`) is supported too.
+    assert_eq!(
+        ArtifactName::from(String::from("bundle")),
+        ArtifactName::Bundle
+    );
 }
 
 #[test]
 fn envelope_decodes_signer_payload() {
-    let body = r#"{"status":200,"message":"","data":{"resource":"signer","id":"abc","full_name":"Bill","email":"b@e.com","whatsapp_phone_number":null,"has_accepted_terms":false}}"#;
+    let body = r#"{"status":200,"message":"","data":{"resource":"signer","id":"abc","full_name":"Bill","email":"user@example.invalid","whatsapp_phone_number":null,"has_accepted_terms":false}}"#;
     let env: Envelope<assinafy::models::Signer> = serde_json::from_str(body).unwrap();
     assert_eq!(env.status, 200);
     assert_eq!(env.data.full_name, "Bill");
-    assert_eq!(env.data.email.as_deref(), Some("b@e.com"));
+    assert_eq!(env.data.email.as_deref(), Some("user@example.invalid"));
 }
 
 #[test]
@@ -98,6 +148,30 @@ fn client_builder_carries_auth_and_base_url() {
         client.base_url().as_str(),
         "https://sandbox.assinafy.com.br/v1/"
     );
+    assert!(matches!(client.auth(), Auth::ApiKey(k) if k == "k"));
+}
+
+#[test]
+fn client_from_api_key_defaults_to_production() {
+    let client = Client::from_api_key("k").unwrap();
+    assert_eq!(
+        client.base_url().as_str(),
+        "https://api.assinafy.com.br/v1/"
+    );
+    assert!(matches!(client.auth(), Auth::ApiKey(k) if k == "k"));
+}
+
+#[test]
+fn client_builder_accepts_custom_http_client_and_connect_timeout() {
+    use std::time::Duration;
+    let custom = reqwest::Client::new();
+    let client = Client::builder()
+        .api_key("k")
+        .connect_timeout(Duration::from_secs(1))
+        .http_client(custom)
+        .build()
+        .unwrap();
+    // Builder options besides http_client/connect_timeout still apply.
     assert!(matches!(client.auth(), Auth::ApiKey(k) if k == "k"));
 }
 
@@ -127,19 +201,51 @@ fn auth_debug_redacts_credentials() {
 }
 
 #[test]
+fn response_debug_redacts_bearer_and_signing_urls() {
+    let login: assinafy::models::LoginResult = serde_json::from_value(serde_json::json!({
+        "access_token": "bearer-secret",
+        "user": {
+            "id": "user-1",
+            "name": "Example User",
+            "email": "user@example.invalid",
+            "created_at": "2026-08-20T00:00:00Z"
+        },
+        "accounts": []
+    }))
+    .unwrap();
+    let signing_url: assinafy::models::SigningUrl = serde_json::from_value(serde_json::json!({
+        "signer_id": "signer-1",
+        "url": "https://sign.example.invalid/private-token"
+    }))
+    .unwrap();
+
+    let rendered = format!("{login:?} {signing_url:?}");
+    assert!(!rendered.contains("bearer-secret"));
+    assert!(!rendered.contains("private-token"));
+    assert!(rendered.contains("redacted"));
+}
+
+#[test]
 fn api_key_response_accepts_missing_key() {
     let response: ApiKeyResponse = serde_json::from_str(r#"{"api_key":null}"#).unwrap();
     assert_eq!(response.api_key, None);
 }
 
 #[test]
+fn api_key_response_accepts_null_envelope_data() {
+    let envelope: Envelope<Option<ApiKeyResponse>> =
+        serde_json::from_str(r#"{"status":200,"message":"","data":null}"#).unwrap();
+    let response = envelope.data.unwrap_or_default();
+    assert_eq!(response.api_key, None);
+}
+
+#[test]
 fn documented_public_send_token_body_shape() {
-    let body = serde_json::to_value(SendTokenBody::email("bill@example.com")).unwrap();
+    let body = serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap();
     assert_eq!(
         body,
         serde_json::json!({
-            "recipient": "bill@example.com",
-            "channel": "email"
+            "email": "user@example.invalid"
         })
     );
 }
@@ -219,12 +325,12 @@ fn update_tag_body_can_clear_color() {
 #[test]
 fn auth_request_builders_emit_documented_fields() {
     assert_eq!(
-        serde_json::to_value(LoginBody::new("bill@example.com", "secret")).unwrap(),
-        serde_json::json!({ "email": "bill@example.com", "password": "secret" })
+        serde_json::to_value(LoginBody::new("user@example.invalid", "secret")).unwrap(),
+        serde_json::json!({ "email": "user@example.invalid", "password": "secret" })
     );
     assert_eq!(
-        serde_json::to_value(RequestPasswordResetBody::new("bill@example.com")).unwrap(),
-        serde_json::json!({ "email": "bill@example.com" })
+        serde_json::to_value(RequestPasswordResetBody::new("user@example.invalid")).unwrap(),
+        serde_json::json!({ "email": "user@example.invalid" })
     );
     assert_eq!(
         serde_json::to_value(SocialLoginBody::google("token", true)).unwrap(),
@@ -241,7 +347,7 @@ fn signer_confirmation_builder_can_set_all_documented_fields() {
     let json = serde_json::to_value(
         ConfirmSignerDataBody::new()
             .full_name("Bill Murray")
-            .email("bill@example.com")
+            .email("user@example.invalid")
             .whatsapp("+5548999990000")
             .accepted_terms(true)
             .verification_code("123456"),
@@ -251,7 +357,7 @@ fn signer_confirmation_builder_can_set_all_documented_fields() {
         json,
         serde_json::json!({
             "full_name": "Bill Murray",
-            "email": "bill@example.com",
+            "email": "user@example.invalid",
             "whatsapp_phone_number": "+5548999990000",
             "has_accepted_terms": true,
             "code": "123456"
@@ -260,15 +366,14 @@ fn signer_confirmation_builder_can_set_all_documented_fields() {
 }
 
 #[test]
-fn public_send_token_supports_whatsapp_channel() {
-    let body = serde_json::to_value(SendTokenBody::whatsapp("+5548999990000")).unwrap();
-    assert_eq!(
-        body,
-        serde_json::json!({
-            "recipient": "+5548999990000",
-            "channel": "whatsapp"
-        })
-    );
+fn password_endpoint_email_result_decodes_documented_shape() {
+    let envelope: Envelope<EmailResult> = serde_json::from_value(serde_json::json!({
+        "status": 200,
+        "message": "",
+        "data": { "email": "user@example.invalid" }
+    }))
+    .unwrap();
+    assert_eq!(envelope.data.email, "user@example.invalid");
 }
 
 #[test]
@@ -297,10 +402,15 @@ fn template_default_document_tag_can_include_color() {
 }
 
 #[test]
-fn api_error_decodes_route_not_found_shape() {
-    // The API returns two distinct 404 bodies: a resource-404 with a `data`
-    // field, and this route-not-found shape (extra `name`/`code`, no `data`).
-    // `ApiError::data` relies on `#[serde(default)]` to decode the latter.
+fn api_error_derived_deserialize_tolerates_route_not_found_shape() {
+    // This exercises `ApiError`'s plain `#[derive(Deserialize)]` on a raw
+    // route-not-found body (extra `name`/`code`, no `data` key) — relevant if
+    // a caller deserializes an error body themselves. It does NOT exercise
+    // the SDK's actual HTTP-error path: that path goes through the private
+    // `map_error`, which instead preserves the *whole* body in `data` so
+    // `name`/`code` survive (see `map_error_keeps_whole_body_for_route_miss_shape`
+    // in src/http.rs's own inline tests). The two intentionally decode
+    // differently for the same input.
     let body = r#"{"name":"Not Found","message":"Página não encontrada.","code":0,"status":404}"#;
     let err: assinafy::ApiError = serde_json::from_str(body).unwrap();
     assert_eq!(err.status, 404);
@@ -345,6 +455,48 @@ fn public_document_decodes_with_string_page_count() {
 }
 
 #[test]
+fn public_document_preserves_current_document_shape() {
+    use assinafy::models::PublicDocument;
+
+    let body = serde_json::json!({
+        "resource": "document",
+        "id": "document_1",
+        "account_id": "account_1",
+        "template_id": null,
+        "name": "agreement.pdf",
+        "status": "metadata_ready",
+        "artifacts": { "original": "https://files.example.invalid/original.pdf" },
+        "pages": [{
+            "id": "page_1",
+            "number": 1,
+            "height": 1651,
+            "width": 1275
+        }],
+        "assignment": null,
+        "is_closed": false,
+        "signing_url": "https://sign.example.invalid/document_1",
+        "decline_reason": null,
+        "declined_by": null,
+        "tags": [{ "id": "tag_1", "name": "Agreements" }],
+        "created_at": "2026-08-20T12:00:00Z",
+        "updated_at": "2026-08-20T12:01:00Z"
+    });
+    let document: PublicDocument = serde_json::from_value(body).unwrap();
+
+    assert_eq!(document.account_id.as_deref(), Some("account_1"));
+    assert_eq!(
+        document.status.as_ref().map(DocumentStatus::as_str),
+        Some("metadata_ready")
+    );
+    assert_eq!(document.artifacts.len(), 1);
+    assert_eq!(document.pages.len(), 1);
+    assert_eq!(document.is_closed, Some(false));
+    assert_eq!(document.tags.len(), 1);
+    assert!(document.created_at.is_some());
+    assert!(document.page_count.is_none());
+}
+
+#[test]
 fn editor_field_serializes_documented_shape() {
     use assinafy::resources::EditorField;
     let json = serde_json::to_value(EditorField::new("field_1", "hello")).unwrap();
@@ -368,12 +520,16 @@ fn assignment_body_omits_undocumented_top_level_methods() {
 fn account_decodes_list_and_by_id_shapes() {
     use assinafy::models::Account;
     // List shape: roles + is_delete_allowed, no colors.
-    let list = r#"{"id":"acc1","name":"MT","roles":["owner"],"is_delete_allowed":true,"created_at":"2026-05-12T18:05:11Z"}"#;
+    let list = r#"{"resource":"account","id":"acc1","name":"MT","notification_sender_type":"User","roles":["owner"],"is_delete_allowed":true,"created_at":"2026-05-12T18:05:11Z"}"#;
     let a: Account = serde_json::from_str(list).unwrap();
     assert_eq!(a.id, "acc1");
     assert_eq!(a.roles, vec!["owner".to_string()]);
     assert!(a.is_delete_allowed);
     assert_eq!(a.primary_color, None);
+    assert_eq!(
+        a.notification_sender_type,
+        Some(assinafy::models::NotificationSenderType::User)
+    );
 
     // By-id shape: colors present (possibly null), no roles.
     let by_id = r#"{"id":"acc1","name":"MT","primary_color":"2072b9","secondary_color":null,"created_at":"2026-05-12T18:05:11Z"}"#;
@@ -413,7 +569,7 @@ fn create_account_body_and_sender_type_serialize() {
 #[test]
 fn signer_self_decodes_is_signature_reusable() {
     use assinafy::models::SignerSelf;
-    let body = r#"{"resource":"signer","id":"s1","full_name":"Bill","email":"b@e.com",
+    let body = r#"{"resource":"signer","id":"s1","full_name":"Bill","email":"user@example.invalid",
         "whatsapp_phone_number":null,"has_accepted_terms":true,
         "has_signature":true,"has_initial":false,"is_signature_reusable":true}"#;
     let s: SignerSelf = serde_json::from_str(body).unwrap();
@@ -428,7 +584,7 @@ fn signer_self_decodes_is_signature_reusable() {
 #[test]
 fn assignment_summary_signer_decodes_whatsapp() {
     use assinafy::models::AssignmentSummarySigner;
-    let body = r#"{"id":"s1","full_name":"Ada","email":"ada@e.com",
+    let body = r#"{"id":"s1","full_name":"Ada","email":"user@example.invalid",
         "whatsapp_phone_number":"+5548999990000","has_accepted_terms":false,"completed":false}"#;
     let s: AssignmentSummarySigner = serde_json::from_str(body).unwrap();
     assert_eq!(s.whatsapp_phone_number.as_deref(), Some("+5548999990000"));
@@ -465,13 +621,12 @@ fn confirm_data_body_emits_government_id() {
 #[test]
 fn api_error_exposes_retry_after_field() {
     // The rate-limit path populates `retry_after`; it round-trips via serde and
-    // is omitted when absent.
-    let with = assinafy::ApiError {
-        status: 429,
-        message: "Too Many Requests".into(),
-        data: serde_json::Value::Null,
-        retry_after: Some(50),
-    };
+    // is omitted when absent. `ApiError` is `#[non_exhaustive]`, so build it
+    // via deserialization rather than a struct literal.
+    let with: assinafy::ApiError = serde_json::from_str(
+        r#"{"status":429,"message":"Too Many Requests","data":null,"retry_after":50}"#,
+    )
+    .unwrap();
     let json = serde_json::to_value(&with).unwrap();
     assert_eq!(json["retry_after"], 50);
 
@@ -502,4 +657,123 @@ fn template_document_body_serializes_only_documented_fields() {
     // Undocumented fields must not be emitted.
     assert!(json.get("expiration").is_none());
     assert!(json.get("tag_ids").is_none());
+}
+
+#[test]
+fn cost_estimate_decodes_live_shape_and_breakdown() {
+    use assinafy::models::{BlockingReason, CostEstimate};
+
+    // Exact body returned live by POST /documents/{id}/assignments/estimate-cost.
+    let live = r#"{"documents":1,"credits":0,"needs_extra_document":false,
+        "extra_document_cost":0,"total_credits":0,"breakdown":[],
+        "document_balance":42,"credit_balance":0,"has_sufficient_resources":true,
+        "blocking_reason":null,"message":null}"#;
+    let est: CostEstimate = serde_json::from_str(live).unwrap();
+    assert_eq!(est.documents, 1.0);
+    assert_eq!(est.document_balance, 42.0);
+    assert!(est.has_sufficient_resources);
+    assert!(est.blocking_reason.is_none());
+    assert!(est.breakdown.is_empty());
+
+    // A blocked estimate with a populated breakdown.
+    let blocked = r#"{"documents":1,"credits":2,"needs_extra_document":true,
+        "extra_document_cost":1.5,"total_credits":3.5,
+        "breakdown":[{"code":"NotificationWhatsapp","name":"WhatsApp","cost":2.0,
+                      "quantity":2.0,"unit_cost":1.0}],
+        "document_balance":0,"credit_balance":0,"has_sufficient_resources":false,
+        "blocking_reason":"InsufficientCredits","message":"Sem créditos"}"#;
+    let est: CostEstimate = serde_json::from_str(blocked).unwrap();
+    assert_eq!(est.breakdown.len(), 1);
+    assert_eq!(est.breakdown[0].code, "NotificationWhatsapp");
+    assert_eq!(est.breakdown[0].unit_cost, 1.0);
+    assert_eq!(
+        est.blocking_reason,
+        Some(BlockingReason::InsufficientCredits)
+    );
+
+    // An unmodelled blocking reason degrades to `Other` instead of failing.
+    let unknown = r#"{"blocking_reason":"SomethingNew"}"#;
+    let est: CostEstimate = serde_json::from_str(unknown).unwrap();
+    assert_eq!(
+        est.blocking_reason,
+        Some(BlockingReason::Other("SomethingNew".into()))
+    );
+}
+
+#[test]
+fn activity_decodes_hyphenated_and_underscored_user_agent() {
+    use assinafy::models::Activity;
+
+    // The API sends `user-agent`; the alias also accepts `user_agent`.
+    let hyphenated = r#"{"id":19178,"event":"signature_requested","message":"Assinatura solicitada",
+        "payload":{"id":19178},"origin":{"ip":"203.0.113.7","user-agent":"Mozilla/5.0"},
+        "created_at":"2026-08-10T18:00:00Z"}"#;
+    let activity: Activity = serde_json::from_str(hyphenated).unwrap();
+    assert_eq!(activity.id, 19178);
+    assert_eq!(activity.event, "signature_requested");
+    assert_eq!(
+        activity.origin.as_ref().unwrap().user_agent.as_deref(),
+        Some("Mozilla/5.0")
+    );
+
+    let underscored = r#"{"id":1,"event":"e","origin":{"user_agent":"curl/8"},
+        "created_at":"2026-08-10T18:00:00Z"}"#;
+    let activity: Activity = serde_json::from_str(underscored).unwrap();
+    assert_eq!(
+        activity.origin.unwrap().user_agent.as_deref(),
+        Some("curl/8")
+    );
+}
+
+#[test]
+fn self_user_decodes_live_users_self_shape() {
+    use assinafy::models::SelfUser;
+
+    // Exact body returned live by GET /users/self.
+    let live = r#"{"user":{"id":"md3j6p9w8b7y6qvqaoy5er42","name":"Multica Test",
+        "email":"user@example.invalid","telephone":null,"government_id":"",
+        "is_email_verified":true,"has_accepted_terms":true,"is_password_set":true,
+        "created_at":"2026-05-12T18:05:11Z","to_be_deleted_at":null},
+        "accounts":[{"id":"acc_1234567890abcdef12345678","name":"MT","roles":["owner"],
+        "is_delete_allowed":true,"created_at":"2026-05-12T18:05:11Z"}]}"#;
+    let me: SelfUser = serde_json::from_str(live).unwrap();
+    assert_eq!(me.user.email, "user@example.invalid");
+    assert!(me.user.is_password_set);
+    assert_eq!(me.accounts.len(), 1);
+    assert_eq!(me.accounts[0].roles, vec!["owner"]);
+}
+
+#[test]
+fn auth_change_reset_and_link_bodies_emit_documented_fields() {
+    use assinafy::resources::{ChangePasswordBody, LinkSocialLoginBody, ResetPasswordBody};
+
+    let change = serde_json::to_value(ChangePasswordBody::new(
+        "user@example.invalid",
+        "old-pw",
+        "new-pw",
+    ))
+    .unwrap();
+    // `current_password` is sent on the wire as `password`.
+    assert_eq!(
+        change,
+        serde_json::json!({
+            "email": "user@example.invalid",
+            "password": "old-pw",
+            "new_password": "new-pw"
+        })
+    );
+
+    // `token` is omitted entirely until set.
+    let reset =
+        serde_json::to_value(ResetPasswordBody::new("user@example.invalid", "new-pw")).unwrap();
+    assert!(reset.get("token").is_none());
+    let reset = serde_json::to_value(
+        ResetPasswordBody::new("user@example.invalid", "new-pw").token("tok-123"),
+    )
+    .unwrap();
+    assert_eq!(reset["token"], "tok-123");
+    assert_eq!(reset["new_password"], "new-pw");
+
+    let link = serde_json::to_value(LinkSocialLoginBody::new("google", "id-token")).unwrap();
+    assert_eq!(link["provider"], "google");
 }

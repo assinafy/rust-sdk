@@ -1,7 +1,5 @@
 //! Error types returned by the SDK.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 
 /// Convenience alias for results returned by this crate.
@@ -17,7 +15,7 @@ pub enum Error {
 
     /// The underlying HTTP transport produced an error.
     #[error("http transport error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[source] reqwest::Error),
 
     /// Failed to serialize or deserialize JSON.
     #[error("serialization error: {0}")]
@@ -38,6 +36,15 @@ pub enum Error {
     /// The server returned an unexpected payload that could not be decoded.
     #[error("unexpected response: {0}")]
     UnexpectedResponse(String),
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        // Reqwest attaches the request URL to transport and body-read errors.
+        // Access-token authentication is carried in that URL's query string,
+        // so retaining it would expose credentials through Display/Debug logs.
+        Error::Http(error.without_url())
+    }
 }
 
 impl Error {
@@ -76,11 +83,14 @@ impl Error {
 
 /// Structured payload returned by the Assinafy API for non-2xx responses.
 ///
-/// The Assinafy API consistently uses the `{ status, message, data }`
-/// envelope, even for error responses. This struct preserves the raw `data`
-/// field as [`serde_json::Value`] so callers can inspect validation details
-/// without losing fidelity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Most error responses use the standard `{ status, message, data }`
+/// envelope. A "route not found" response (as opposed to a missing
+/// resource) instead returns a distinct `{ name, message, code, status }`
+/// shape with no `data` field; [`http`](crate)'s error mapping preserves
+/// that whole body in `data` so callers can still recover `name`/`code`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("{message} (status {status})")]
+#[non_exhaustive]
 pub struct ApiError {
     /// HTTP status code (also echoed inside the envelope).
     pub status: u16,
@@ -98,10 +108,32 @@ pub struct ApiError {
     pub retry_after: Option<u64>,
 }
 
-impl fmt::Display for ApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (status {})", self.message, self.status)
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn reqwest_errors_do_not_expose_query_credentials() {
+        const SECRET: &str = "sentinel-query-credential";
+        let transport_error = reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_millis(100))
+            .build()
+            .unwrap()
+            .get(format!("http://127.0.0.1:0/path?access-token={SECRET}"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            transport_error
+                .url()
+                .is_some_and(|url| url.as_str().contains(SECRET))
+        );
+
+        let error = Error::from(transport_error);
+        let rendered = format!("{error} {error:?}");
+        assert!(!rendered.contains(SECRET));
     }
 }
-
-impl std::error::Error for ApiError {}

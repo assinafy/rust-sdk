@@ -6,8 +6,9 @@
 Async, idiomatic Rust client for the [Assinafy](https://assinafy.com.br)
 electronic-signature API.
 
-The SDK is a 1:1 mapping of the public REST surface documented at
-<https://api.assinafy.com.br/v1/docs>:
+The SDK covers every operation in the public REST surface documented at
+<https://api.assinafy.com.br/v1/docs>, while retaining a few verified legacy
+sandbox routes for compatibility:
 
 | Surface          | Module                              |
 | ---------------- | ----------------------------------- |
@@ -23,6 +24,7 @@ The SDK is a 1:1 mapping of the public REST surface documented at
 | Templates        | [`Client::templates`]               |
 | Webhooks         | [`Client::webhooks`]                |
 | Activities       | [`Client::activities`]              |
+| Users            | [`Client::users`]                   |
 | Public endpoints | [`Client::public`]                  |
 
 [`Client::auth_api`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.auth_api
@@ -38,6 +40,7 @@ The SDK is a 1:1 mapping of the public REST surface documented at
 [`Client::templates`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.templates
 [`Client::webhooks`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.webhooks
 [`Client::activities`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.activities
+[`Client::users`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.users
 [`Client::public`]: https://docs.rs/assinafy/latest/assinafy/struct.Client.html#method.public
 
 ## Install
@@ -46,9 +49,37 @@ Requires Rust 1.86 or newer.
 
 ```toml
 [dependencies]
-assinafy = "1"
+assinafy = "2"
 tokio    = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
+
+## Upgrading from 1.x
+
+* `models::Artifact` was removed — no endpoint ever returned that shape. Use
+  `Document::artifacts` (a `BTreeMap<String, String>` of name → URL).
+* `AssignmentItem::{field, signer, page}` are now typed (`AssignmentItemField`,
+  `AssignmentItemSigner`, `DocumentPage`) instead of `serde_json::Value`. Drop
+  the manual `serde_json` parsing and read the fields directly.
+* `ApiError` and `PaginationMeta` are now `#[non_exhaustive]`; build them by
+  deserialization rather than struct literals. (Both types have gained fields
+  since 1.0.0 — this makes future additions non-breaking.)
+* `documents().download_artifact(id, ArtifactName::Thumbnail)` now succeeds:
+  it transparently routes to the `/thumbnail` endpoint instead of returning
+  the 404 the `download/{name}` route gives for `thumbnail`.
+* `tags().add_to_document` / `set_on_document` take tag **names**, not IDs —
+  see [Tags](#tags). The behavior is unchanged; only the docs were wrong.
+* `TemplateDocumentSigner::inline` is deprecated: `create_document` requires a
+  signer that already exists. Use `SignersApi::create` then
+  `TemplateDocumentSigner::existing`.
+* `PublicApi::send_token` now follows the production contract (`{ "email":
+  ... }`) and returns `()`. The live sandbox's older `{ recipient, channel }`
+  contract remains available explicitly through `LegacySendTokenBody` and
+  `send_token_legacy`.
+* Password-management methods now return `EmailResult`, `confirm_data` returns
+  the updated `Signer`, assignment signing returns the API's otherwise
+  unspecified JSON object, and tag delete/detach methods return their
+  documented boolean result. Callers that already discard these results with
+  `?;` need no changes.
 
 ## Quick start
 
@@ -62,7 +93,7 @@ let client = Client::builder()
     .build()?;
 
 let signers = client
-    .signers("102d25a489f34a275d31a16045fd")
+    .signers("acc_1234567890abcdef12345678")
     .list()
     .per_page(50)
     .send()
@@ -132,10 +163,10 @@ let body = CreateAssignmentBody::new(
 
 let assignment = client.assignments().create("doc_abc", &body).await?;
 
-// Clear expiration by sending the documented JSON null value.
+// Extend the assignment using the documented ISO-8601 timestamp.
 client
     .assignments()
-    .reset_expiration("doc_abc", &assignment.id, None)
+    .reset_expiration_at("doc_abc", &assignment.id, "2026-12-31T23:59:59Z")
     .await?;
 
 for url in &assignment.signing_urls {
@@ -182,8 +213,12 @@ println!("tag id: {}", tag.id);
 # Ok(()) }
 ```
 
-Document tag operations take **tag IDs** (the identifiers returned by
-`tags.create(...)` / `tags.list()`), matching the API reference:
+`add_to_document`/`set_on_document` take tag **names**, not IDs: the API
+upserts each entry by a case-insensitive name match against the account's
+existing tags, auto-creating a new tag if none matches. Passing a real tag
+ID here creates a junk tag named after that literal ID string.
+`remove_from_document` is the one document-tag operation that takes a real
+tag ID (as returned by `tags.create(...)` / `tags.list()`):
 
 ```rust
 use assinafy::Client;
@@ -191,8 +226,9 @@ use assinafy::Client;
 # async fn run() -> assinafy::Result<()> {
 let client = Client::from_api_key("k")?;
 let tags = client.tags("acc_123");
-tags.add_to_document("doc_abc", ["tag_id_1", "tag_id_2"]).await?;
-tags.set_on_document("doc_abc", ["tag_id_3"]).await?;
+tags.add_to_document("doc_abc", ["Contracts", "Urgent"]).await?;
+tags.set_on_document("doc_abc", ["Signed"]).await?;
+tags.remove_from_document("doc_abc", "tag_id_returned_by_list_for_document").await?;
 # Ok(()) }
 ```
 
@@ -221,6 +257,18 @@ println!("{} theme: {:?}", account.name, theme.primary_color);
 # Ok(()) }
 ```
 
+### The authenticated user
+
+```rust
+use assinafy::Client;
+
+# async fn run() -> assinafy::Result<()> {
+let client = Client::from_api_key("k")?;
+let me = client.users().me().await?;
+println!("{} <{}>", me.name, me.email);
+# Ok(()) }
+```
+
 ### Signer-facing flows
 
 Signer-facing endpoints use `Auth::AccessCode`, which automatically adds the
@@ -241,7 +289,7 @@ client
     .confirm_data(
         "doc_abc",
         &ConfirmSignerDataBody::new()
-            .email("signer@example.com")
+            .email("user@example.invalid")
             .accepted_terms(true),
     )
     .await?;
@@ -305,14 +353,18 @@ Use [`ClientBuilder::sandbox`] to target the public sandbox at
 ```bash
 export ASSINAFY_API_KEY=<sandbox-key>
 export ASSINAFY_ACCOUNT_ID=<sandbox-account>
+export ASSINAFY_TEST_EMAIL_PRIMARY=<notification-test-inbox>
+export ASSINAFY_TEST_EMAIL_SECONDARY=<secondary-test-inbox>
 cargo test --test sandbox -- --ignored --test-threads=1
 ```
 
 The `--ignored` flag is required because these tests hit the live sandbox, and
-`--test-threads=1` keeps the shared workspace state consistent. The
+`--test-threads=1` keeps the shared workspace state consistent. The email
+variables are read only at runtime and are required for notification-delivery
+coverage; they are never compiled into the SDK. The
 [`Sandbox` workflow](.github/workflows/sandbox.yml) runs them on a daily
-schedule when the `ASSINAFY_API_KEY` and `ASSINAFY_ACCOUNT_ID` repository
-secrets are configured (they skip themselves when the secrets are absent).
+schedule and requires all four values as repository secrets. Local test runs
+skip live calls when the API credential or account ID is absent.
 
 ## License
 

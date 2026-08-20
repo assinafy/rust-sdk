@@ -189,7 +189,7 @@ impl UploadDocumentRequest {
     }
 
     fn into_form(self) -> Result<Form> {
-        let part = Part::bytes(self.bytes.to_vec())
+        let part = Part::stream(self.bytes)
             .file_name(self.filename)
             .mime_str(&self.mime)
             .map_err(|e| Error::Config(format!("invalid mime `{}`: {e}", self.mime)))?;
@@ -347,6 +347,17 @@ impl<'a> DocumentsApi<'a> {
     /// ```json
     /// { "name": "Signed service agreement.pdf" }
     /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "resource": "document", "id": "103e4af8c99c19de9cabda1d22c4",
+    ///   "account_id": "acc_1234567890abcdef12345678", "template_id": null,
+    ///   "name": "Signed service agreement.pdf", "status": "metadata_ready",
+    ///   "artifacts": { "original": "https://…", "thumbnail": "https://…" },
+    ///   "is_closed": false, "tags": [], "assignment": null, "pages": [] } }
+    /// ```
     pub async fn rename<S: AsRef<str>, N: Into<String>>(
         &self,
         document_id: S,
@@ -380,6 +391,13 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// `GET /documents/{document_id}/download/{artifact_name}`.
     ///
+    /// [`ArtifactName::Thumbnail`] is transparently redirected to
+    /// [`download_thumbnail`](Self::download_thumbnail) — the
+    /// `download/{artifact_name}` route only accepts `original`,
+    /// `certificated`, `certificate-page`, `pades`, and `bundle`; `thumbnail` is
+    /// live-verified to 404 there and is only served via the dedicated
+    /// `/thumbnail` route.
+    ///
     /// # Response
     ///
     /// The response body is the raw artifact bytes (for `original`,
@@ -391,6 +409,9 @@ impl<'a> DocumentsApi<'a> {
         artifact: impl Into<ArtifactName>,
     ) -> Result<(Bytes, String)> {
         let artifact: ArtifactName = artifact.into();
+        if artifact == ArtifactName::Thumbnail {
+            return self.download_thumbnail(document_id).await;
+        }
         let path = format!(
             "documents/{}/download/{}",
             document_id.as_ref(),
@@ -459,7 +480,7 @@ impl<'a> DocumentsApi<'a> {
     /// ```
     pub async fn verify<S: AsRef<str>>(&self, signature_hash: S) -> Result<DocumentVerification> {
         let path = format!("documents/{}/verify", signature_hash.as_ref());
-        let req = self.http.request(Method::GET, &path)?;
+        let req = self.http.request_public(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
 }

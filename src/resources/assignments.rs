@@ -3,11 +3,11 @@
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::http::HttpClient;
 use crate::models::{
-    Assignment, AssignmentMethod, CostEstimate, NotificationMethod, ResendCostEstimate,
-    ResendNotificationResult, SignDocumentItem, VerificationMethod, WhatsAppNotification,
+    Assignment, AssignmentMethod, CostEstimate, NotificationMethod, ResendNotificationResult,
+    SignDocumentItem, VerificationMethod, WhatsAppNotification,
 };
 use crate::pagination::Page;
 
@@ -177,10 +177,11 @@ impl CreateAssignmentBody {
     }
 
     /// Use per-signer overrides instead of a bulk list.
-    pub fn with_signers(mut self, signers: Vec<CreateAssignmentSigner>) -> Self {
-        self.signers = Some(signers);
-        self.signer_ids.clear();
-        self
+    ///
+    /// Equivalent to [`signers`](Self::signers), which accepts any
+    /// `IntoIterator` rather than requiring a `Vec`.
+    pub fn with_signers(self, signers: Vec<CreateAssignmentSigner>) -> Self {
+        self.signers(signers)
     }
 
     /// Set per-signer overrides.
@@ -220,6 +221,26 @@ impl CreateAssignmentBody {
         self.copy_receiver_ids = ids.into_iter().map(Into::into).collect();
         self
     }
+}
+
+fn validate_create_assignment(body: &CreateAssignmentBody) -> Result<()> {
+    if let Some(signers) = &body.signers {
+        if signers.is_empty() {
+            return Err(Error::Config(
+                "assignment creation requires at least one signer".into(),
+            ));
+        }
+        if signers.iter().any(|signer| signer.id.is_empty()) {
+            return Err(Error::Config(
+                "every assignment signer must have an id".into(),
+            ));
+        }
+    } else if body.signer_ids.is_empty() {
+        return Err(Error::Config(
+            "assignment creation requires at least one signer".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Entry used to place fields on a document page for collect assignments.
@@ -276,18 +297,52 @@ impl AssignmentField {
 
 /// Body for `POST /documents/{document_id}/assignments/estimate-cost`.
 ///
-/// Accepts the same fields as a full create request; the server inspects them
-/// without actually dispatching anything.
+/// Kept as an alias for source compatibility. Before sending, the SDK projects
+/// it onto the endpoint's documented pricing fields (`method`, signer methods,
+/// and `entries`), so signer IDs and create-only metadata are never emitted.
 pub type EstimateAssignmentCostBody = CreateAssignmentBody;
 
-/// Builder for `GET /assignments` (list assignments for an account).
-///
-/// The list endpoint requires an account context, supplied as the `accountId`
-/// query parameter, plus optional pagination.
+#[derive(Serialize)]
+struct EstimateAssignmentSignerPayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_method: Option<&'a VerificationMethod>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notification_methods: Option<&'a Vec<NotificationMethod>>,
+}
+
+#[derive(Serialize)]
+struct EstimateAssignmentPayload<'a> {
+    method: AssignmentMethod,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signers: Option<Vec<EstimateAssignmentSignerPayload<'a>>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    entries: &'a Vec<AssignmentEntry>,
+}
+
+impl<'a> From<&'a EstimateAssignmentCostBody> for EstimateAssignmentPayload<'a> {
+    fn from(body: &'a EstimateAssignmentCostBody) -> Self {
+        let signers = body.signers.as_ref().map(|signers| {
+            signers
+                .iter()
+                .map(|signer| EstimateAssignmentSignerPayload {
+                    verification_method: signer.verification_method.as_ref(),
+                    notification_methods: signer.notification_methods.as_ref(),
+                })
+                .collect()
+        });
+        Self {
+            method: body.method,
+            signers,
+            entries: &body.entries,
+        }
+    }
+}
+
+/// Builder for `GET /assignments`.
 #[derive(Debug)]
 pub struct ListAssignmentsRequest<'a> {
     http: &'a HttpClient,
-    account_id: String,
+    account_id: Option<String>,
     page: Option<u32>,
     per_page: Option<u32>,
 }
@@ -307,18 +362,19 @@ impl<'a> ListAssignmentsRequest<'a> {
 
     /// Execute the request.
     ///
-    /// `GET /assignments?accountId={account_id}` (with optional `page` and
-    /// `per-page` query parameters).
+    /// `GET /assignments` with optional `page` and `per-page` query
+    /// parameters. The SDK also sends the sandbox-compatible `accountId`
+    /// parameter when the request came from [`AssignmentsApi::list`].
     ///
     /// # Response payload
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
-    ///   { "id": "103033c9d2cec233bf65eea04999", "sender_email": "owner@acme.com",
+    ///   { "id": "103033c9d2cec233bf65eea04999", "sender_email": "user@example.invalid",
     ///     "method": "virtual", "expires_at": null, "message": "Please sign",
     ///     "copy_receivers": [], "items": [],
     ///     "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Ada Lovelace",
-    ///       "email": "ada@acme.com", "whatsapp_phone_number": null,
+    ///       "email": "user@example.invalid", "whatsapp_phone_number": null,
     ///       "has_accepted_terms": false, "completed": false, "notification_history": [],
     ///       "verification_method": "Email", "notification_methods": ["Email"],
     ///       "step": 1, "notified": true } ],
@@ -327,14 +383,20 @@ impl<'a> ListAssignmentsRequest<'a> {
     /// ]}
     /// ```
     pub async fn send(self) -> Result<Page<Assignment>> {
-        let mut query: Vec<(&str, String)> = vec![("accountId", self.account_id)];
+        let mut query: Vec<(&str, String)> = Vec::with_capacity(3);
+        if let Some(account_id) = self.account_id {
+            query.push(("accountId", account_id));
+        }
         if let Some(v) = self.page {
             query.push(("page", v.to_string()));
         }
         if let Some(v) = self.per_page {
             query.push(("per-page", v.to_string()));
         }
-        let req = self.http.request(Method::GET, "assignments")?.query(&query);
+        let mut req = self.http.request(Method::GET, "assignments")?;
+        if !query.is_empty() {
+            req = req.query(&query);
+        }
         self.http.send_paged(req).await
     }
 }
@@ -350,19 +412,20 @@ impl<'a> AssignmentsApi<'a> {
         Self { http }
     }
 
-    /// List the assignments belonging to an account.
+    /// List assignments using the sandbox-compatible account context.
     ///
     /// `GET /assignments?accountId={account_id}`. Returns a builder that adds
     /// optional pagination and sends the request. The `accountId` query
-    /// parameter is required by the API — the SDK always sends it.
+    /// parameter is required by the sandbox API. Production callers should
+    /// prefer [`Self::list_current`], which follows the published contract.
     ///
     /// # Response payload
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
-    ///   { "id": "103033c9...", "sender_email": "owner@acme.com", "method": "virtual",
+    ///   { "id": "103033c9...", "sender_email": "user@example.invalid", "method": "virtual",
     ///     "expires_at": null, "message": "Please sign", "copy_receivers": [],
-    ///     "signers": [ { "id": "19e6b9...", "full_name": "Ada", "email": "ada@acme.com",
+    ///     "signers": [ { "id": "19e6b9...", "full_name": "Ada", "email": "user@example.invalid",
     ///       "step": 1, "completed": false, "verification_method": "Email",
     ///       "notification_methods": ["Email"], "notified": true } ],
     ///     "summary": { "signer_count": 1, "completed_count": 0, "signers": [ … ] },
@@ -372,7 +435,19 @@ impl<'a> AssignmentsApi<'a> {
     pub fn list<S: Into<String>>(&self, account_id: S) -> ListAssignmentsRequest<'_> {
         ListAssignmentsRequest {
             http: self.http,
-            account_id: account_id.into(),
+            account_id: Some(account_id.into()),
+            page: None,
+            per_page: None,
+        }
+    }
+
+    /// List assignments for the authenticated user's current account.
+    ///
+    /// `GET /assignments`, with only the documented pagination parameters.
+    pub fn list_current(&self) -> ListAssignmentsRequest<'_> {
+        ListAssignmentsRequest {
+            http: self.http,
+            account_id: None,
             page: None,
             per_page: None,
         }
@@ -401,10 +476,10 @@ impl<'a> AssignmentsApi<'a> {
     /// ```json
     /// { "status": 200, "message": "", "data": {
     ///   "resource": "assignment", "id": "103033c9d2cec233bf65eea04999",
-    ///   "sender_email": "owner@acme.com", "method": "virtual", "expires_at": null,
+    ///   "sender_email": "user@example.invalid", "method": "virtual", "expires_at": null,
     ///   "message": "Please review and sign this contract.", "copy_receivers": [],
     ///   "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Ada Lovelace",
-    ///     "email": "ada@acme.com", "whatsapp_phone_number": null,
+    ///     "email": "user@example.invalid", "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false, "completed": false, "notification_history": [],
     ///     "verification_method": "Email", "notification_methods": ["Email"],
     ///     "step": 1, "notified": true } ],
@@ -422,6 +497,7 @@ impl<'a> AssignmentsApi<'a> {
         document_id: S,
         body: &CreateAssignmentBody,
     ) -> Result<Assignment> {
+        validate_create_assignment(body)?;
         let path = format!("documents/{}/assignments", document_id.as_ref());
         let req = self.http.request(Method::POST, &path)?.json(body);
         self.http.send_data(req).await
@@ -437,8 +513,7 @@ impl<'a> AssignmentsApi<'a> {
     /// {
     ///   "method": "virtual",
     ///   "signers": [
-    ///     { "id": "19e6b92e7895332ed9708535d8c",
-    ///       "verification_method": "Whatsapp", "notification_methods": ["Whatsapp"] }
+    ///     { "verification_method": "Whatsapp", "notification_methods": ["Whatsapp"] }
     ///   ]
     /// }
     /// ```
@@ -461,13 +536,16 @@ impl<'a> AssignmentsApi<'a> {
             "documents/{}/assignments/estimate-cost",
             document_id.as_ref()
         );
-        let req = self.http.request(Method::POST, &path)?.json(body);
+        let payload = EstimateAssignmentPayload::from(body);
+        let req = self.http.request(Method::POST, &path)?.json(&payload);
         self.http.send_envelope(req).await
     }
 
     /// Extend an assignment's expiration deadline.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignmentId}/reset-expiration`.
+    /// Pass `Some(timestamp)` for the production contract. `None` retains the
+    /// live-verified legacy sandbox behavior of sending `expires_at: null`.
     ///
     /// # Request payload
     ///
@@ -479,7 +557,7 @@ impl<'a> AssignmentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "id": "103033c9d2cec233bf65eea04999", "sender_email": "owner@acme.com",
+    ///   "id": "103033c9d2cec233bf65eea04999", "sender_email": "user@example.invalid",
     ///   "method": "virtual", "expires_at": "2026-12-31T23:59:59Z",
     ///   "message": "Please sign", "copy_receivers": [], "signers": [], "items": [],
     ///   "summary": { "signer_count": 1, "completed_count": 0, "signers": [] },
@@ -501,6 +579,21 @@ impl<'a> AssignmentsApi<'a> {
             .request(Method::PUT, &path)?
             .json(&reset_expiration_payload(new_expires_at));
         self.http.send_envelope(req).await
+    }
+
+    /// Extend an assignment using the production API's non-null timestamp.
+    ///
+    /// `PUT /documents/{document_id}/assignments/{assignmentId}/reset-expiration`
+    /// with `{ "expires_at": "..." }`. Returns the complete [`Assignment`]
+    /// payload documented by [`Self::reset_expiration`].
+    pub async fn reset_expiration_at<D: AsRef<str>, A: AsRef<str>>(
+        &self,
+        document_id: D,
+        assignment_id: A,
+        new_expires_at: &str,
+    ) -> Result<Assignment> {
+        self.reset_expiration(document_id, assignment_id, Some(new_expires_at))
+            .await
     }
 
     /// Re-send the signature-request notification to a specific signer.
@@ -538,17 +631,18 @@ impl<'a> AssignmentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "total": 0,
-    ///   "breakdown": [ { "code": "NotificationEmailResend",
-    ///     "name": "Email Notification Resend", "cost": 0 } ],
-    ///   "credit_balance": 0, "has_sufficient_credits": true } }
+    ///   "documents": 1, "credits": 0, "needs_extra_document": false,
+    ///   "extra_document_cost": 0, "total_credits": 0,
+    ///   "breakdown": [], "document_balance": 80, "credit_balance": 0,
+    ///   "has_sufficient_resources": true, "blocking_reason": null,
+    ///   "message": null } }
     /// ```
     pub async fn estimate_resend_cost<D: AsRef<str>, A: AsRef<str>, S: AsRef<str>>(
         &self,
         document_id: D,
         assignment_id: A,
         signer_id: S,
-    ) -> Result<ResendCostEstimate> {
+    ) -> Result<CostEstimate> {
         let path = format!(
             "documents/{}/assignments/{}/signers/{}/estimate-resend-cost",
             document_id.as_ref(),
@@ -605,15 +699,18 @@ impl<'a> AssignmentsApi<'a> {
     ///
     /// # Response payload
     ///
+    /// The API defines the result as an object without fixed properties, so
+    /// the SDK preserves it as [`serde_json::Value`].
+    ///
     /// ```json
-    /// { "status": 200, "message": "", "data": [] }
+    /// { "status": 200, "message": "", "data": {} }
     /// ```
     pub async fn sign<D: AsRef<str>, A: AsRef<str>, I>(
         &self,
         document_id: D,
         assignment_id: A,
         items: I,
-    ) -> Result<()>
+    ) -> Result<serde_json::Value>
     where
         I: IntoIterator<Item = SignDocumentItem>,
     {
@@ -624,7 +721,7 @@ impl<'a> AssignmentsApi<'a> {
         );
         let items: Vec<SignDocumentItem> = items.into_iter().collect();
         let req = self.http.request(Method::POST, &path)?.json(&items);
-        self.http.send_no_content(req).await
+        self.http.send_envelope(req).await
     }
 
     /// Reject a document assignment on behalf of a signer access-code flow.
@@ -663,7 +760,7 @@ impl<'a> AssignmentsApi<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::reset_expiration_payload;
+    use super::*;
 
     #[test]
     fn reset_expiration_none_serializes_null() {
@@ -679,5 +776,52 @@ mod tests {
             reset_expiration_payload(Some("2026-06-01T12:00:00Z")),
             serde_json::json!({ "expires_at": "2026-06-01T12:00:00Z" })
         );
+    }
+
+    #[test]
+    fn estimate_payload_strips_create_only_fields_and_signer_ids() {
+        let body = CreateAssignmentBody::new(AssignmentMethod::Virtual, ["signer-id"])
+            .message("not part of pricing")
+            .expires_at("2026-12-31T23:59:59Z")
+            .copy_receivers(["copy-id"])
+            .signers([CreateAssignmentSigner::new("signer-id")
+                .verification_method(VerificationMethod::Whatsapp)
+                .notification_methods(vec![NotificationMethod::Whatsapp])]);
+
+        assert_eq!(
+            serde_json::to_value(EstimateAssignmentPayload::from(&body)).unwrap(),
+            serde_json::json!({
+                "method": "virtual",
+                "signers": [{
+                    "verification_method": "Whatsapp",
+                    "notification_methods": ["Whatsapp"]
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn assignment_create_requires_signers_with_ids() {
+        let empty = CreateAssignmentBody::from_signers(AssignmentMethod::Virtual, []);
+        assert!(matches!(
+            validate_create_assignment(&empty),
+            Err(Error::Config(_))
+        ));
+
+        let missing_id = CreateAssignmentBody::from_signers(
+            AssignmentMethod::Virtual,
+            [CreateAssignmentSigner::default()],
+        );
+        assert!(matches!(
+            validate_create_assignment(&missing_id),
+            Err(Error::Config(_))
+        ));
+
+        let valid = CreateAssignmentBody::new(AssignmentMethod::Virtual, ["signer-id"]);
+        assert!(validate_create_assignment(&valid).is_ok());
+
+        let legacy = CreateAssignmentBody::from_signers(AssignmentMethod::Virtual, [])
+            .legacy_signer_ids(["signer-id"]);
+        assert!(validate_create_assignment(&legacy).is_ok());
     }
 }

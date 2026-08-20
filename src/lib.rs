@@ -26,7 +26,7 @@
 //!
 //! // List signers in an account.
 //! let signers = client
-//!     .signers("102d25a489f34a275d31a16045fd")
+//!     .signers("acc_1234567890abcdef12345678")
 //!     .list()
 //!     .send()
 //!     .await?;
@@ -83,7 +83,6 @@
 //! [rustls]: https://docs.rs/rustls
 
 #![deny(missing_docs)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
 
 // Compile-check every code block in the README as a doctest without duplicating
 // the crate-level documentation above. `cfg(doctest)` keeps this out of the

@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct WebhookSubscription {
-    /// Subscription identifier, when returned by the API.
+    /// Subscription identifier. Never observed in the spec or in any live
+    /// response — the subscription is an account-level singleton with no
+    /// id-bearing route — so this is always `None` in practice; kept only
+    /// for forward-compatibility.
     #[serde(default)]
     pub id: Option<String>,
     /// Destination URL.

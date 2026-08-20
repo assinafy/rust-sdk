@@ -23,7 +23,7 @@ const DEFAULT_EVENTS: [&str; 5] = [
 /// ```json
 /// {
 ///   "url": "https://hooks.example.com/assinafy",
-///   "email": "bill@febacapital.com",
+///   "email": "user@example.invalid",
 ///   "events": ["document_ready", "signer_signed_document"],
 ///   "is_active": true
 /// }
@@ -226,7 +226,7 @@ impl<'a> WebhooksApi<'a> {
     /// ```json
     /// {
     ///   "url": "https://hooks.example.com/assinafy",
-    ///   "email": "bill@febacapital.com",
+    ///   "email": "user@example.invalid",
     ///   "events": ["document_ready", "signer_signed_document"],
     ///   "is_active": true
     /// }
@@ -242,7 +242,7 @@ impl<'a> WebhooksApi<'a> {
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": true,
     ///     "url": "https://hooks.example.com/assinafy",
-    ///     "email": "bill@febacapital.com",
+    ///     "email": "user@example.invalid",
     ///     "updated_at": "2026-07-18T02:36:02Z"
     ///   }
     /// }
@@ -269,7 +269,7 @@ impl<'a> WebhooksApi<'a> {
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": false,
     ///     "url": "https://hooks.example.com/assinafy",
-    ///     "email": "bill@febacapital.com",
+    ///     "email": "user@example.invalid",
     ///     "updated_at": "2026-07-18T02:36:02Z"
     ///   }
     /// }
@@ -297,7 +297,7 @@ impl<'a> WebhooksApi<'a> {
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": false,
     ///     "url": "https://hooks.example.com/assinafy",
-    ///     "email": "bill@febacapital.com",
+    ///     "email": "user@example.invalid",
     ///     "updated_at": "2026-07-18T02:36:02Z"
     ///   }
     /// }

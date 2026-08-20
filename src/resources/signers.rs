@@ -19,7 +19,7 @@ use crate::pagination::Page;
 /// ```json
 /// {
 ///   "full_name": "John Dove",
-///   "email": "john@email.com",
+///   "email": "user@example.invalid",
 ///   "whatsapp_phone_number": "+5548999990000"
 /// }
 /// ```
@@ -71,8 +71,9 @@ impl CreateSignerBody {
 /// ```json
 /// {
 ///   "full_name": "John Dove",
-///   "email": "john@email.com",
-///   "whatsapp_phone_number": "+5548999990000"
+///   "email": "user@example.invalid",
+///   "whatsapp_phone_number": "+5548999990000",
+///   "government_id": "39053344705"
 /// }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -86,6 +87,9 @@ pub struct UpdateSignerBody {
     /// New WhatsApp phone number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
+    /// New CPF/CNPJ. The API normalizes it to digits only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub government_id: Option<String>,
 }
 
 impl UpdateSignerBody {
@@ -109,6 +113,12 @@ impl UpdateSignerBody {
     /// Set the WhatsApp phone number.
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
+        self
+    }
+
+    /// Set the CPF/CNPJ.
+    pub fn government_id<S: Into<String>>(mut self, government_id: S) -> Self {
+        self.government_id = Some(government_id.into());
         self
     }
 }
@@ -162,7 +172,7 @@ impl<'a> ListSignersRequest<'a> {
     ///     {
     ///       "id": "19e6b92e7895332ed9708535d8c",
     ///       "full_name": "Bill M",
-    ///       "email": "billm@billm.org",
+    ///       "email": "user@example.invalid",
     ///       "whatsapp_phone_number": null,
     ///       "has_accepted_terms": false
     ///     }
@@ -213,7 +223,7 @@ impl<'a> SignersApi<'a> {
     /// ```json
     /// {
     ///   "full_name": "John Dove",
-    ///   "email": "john@email.com",
+    ///   "email": "user@example.invalid",
     ///   "whatsapp_phone_number": "+5548999990000"
     /// }
     /// ```
@@ -228,7 +238,7 @@ impl<'a> SignersApi<'a> {
     ///     "resource": "signer",
     ///     "id": "19f805d5a8319e0a753d92a9f4f",
     ///     "full_name": "John Dove",
-    ///     "email": "john@email.com",
+    ///     "email": "user@example.invalid",
     ///     "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false
     ///   }
@@ -268,7 +278,7 @@ impl<'a> SignersApi<'a> {
     ///     "resource": "signer",
     ///     "id": "19f805d5a8319e0a753d92a9f4f",
     ///     "full_name": "Audit Signer",
-    ///     "email": "billm+audit@billm.org",
+    ///     "email": "user@example.invalid",
     ///     "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false
     ///   }
@@ -306,7 +316,7 @@ impl<'a> SignersApi<'a> {
     ///     "resource": "signer",
     ///     "id": "19f805d5a8319e0a753d92a9f4f",
     ///     "full_name": "John Dove Renamed",
-    ///     "email": "john@email.com",
+    ///     "email": "user@example.invalid",
     ///     "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false
     ///   }

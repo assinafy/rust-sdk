@@ -39,15 +39,6 @@ impl Auth {
             Auth::None => req,
         }
     }
-
-    /// Returns the signer access code when this credential carries one.
-    pub(crate) fn signer_access_code(&self) -> Option<&str> {
-        if let Auth::AccessCode(code) = self {
-            Some(code.as_str())
-        } else {
-            None
-        }
-    }
 }
 
 impl fmt::Debug for Auth {

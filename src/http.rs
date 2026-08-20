@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use reqwest::header::{ACCEPT, HeaderMap};
+use reqwest::header::{ACCEPT, HeaderMap, LOCATION};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -79,13 +79,21 @@ impl HttpClient {
     }
 
     pub(crate) fn request(&self, method: Method, path: &str) -> Result<RequestBuilder> {
+        Ok(self.auth.apply(self.request_public(method, path)?))
+    }
+
+    /// Build a request without applying the client's configured credential.
+    ///
+    /// This is reserved for operations whose OpenAPI definition explicitly
+    /// declares `security: []`.
+    pub(crate) fn request_public(&self, method: Method, path: &str) -> Result<RequestBuilder> {
         let url = self.url(path)?;
         let req = self
             .inner
             .request(method, url)
             .header(ACCEPT, "application/json")
             .header(reqwest::header::USER_AGENT, self.user_agent.as_str());
-        Ok(self.auth.apply(req))
+        Ok(req)
     }
 
     /// Perform a request, decode the JSON envelope, and return the `data`.
@@ -127,10 +135,31 @@ impl HttpClient {
         &self,
         req: RequestBuilder,
     ) -> Result<(bytes::Bytes, HeaderMap)> {
-        let res = req.send().await?;
-        let status = res.status();
-        let headers = res.headers().clone();
-        let body = res.bytes().await?;
+        let mut res = req.send().await?;
+        for _ in 0..10 {
+            if !res.status().is_redirection() {
+                break;
+            }
+            let Some(location) = res.headers().get(LOCATION).and_then(|v| v.to_str().ok()) else {
+                break;
+            };
+            let target = res.url().join(location)?;
+            let mut redirect = self
+                .inner
+                .get(target.clone())
+                .header(ACCEPT, "application/octet-stream")
+                .header(reqwest::header::USER_AGENT, self.user_agent.as_str());
+            if same_origin(&target, &self.base) {
+                redirect = self.auth.apply(redirect);
+            }
+            res = redirect.send().await?;
+        }
+        if res.status().is_redirection() {
+            return Err(Error::UnexpectedResponse(
+                "download exceeded 10 redirects or returned an invalid redirect".into(),
+            ));
+        }
+        let (status, headers, body) = take_response(res).await?;
         ensure_success(status, Some(&headers), &body)?;
         Ok((body, headers))
     }
@@ -151,11 +180,15 @@ impl HttpClient {
     /// whose payload is discarded.
     pub(crate) async fn send_no_content(&self, req: RequestBuilder) -> Result<()> {
         let res = req.send().await?;
-        let status = res.status();
-        let headers = res.headers().clone();
-        let body = res.bytes().await?;
+        let (status, headers, body) = take_response(res).await?;
         ensure_success(status, Some(&headers), &body)
     }
+}
+
+fn same_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
 }
 
 /// Returns `Ok(())` for 2xx responses, otherwise maps the body into an
@@ -210,12 +243,8 @@ fn decode_envelope<T: DeserializeOwned>(
         // accept `()` survive this branch.
         return serde_json::from_str("null").map_err(Error::from);
     }
-    let envelope: Envelope<T> = serde_json::from_slice(body).map_err(|e| {
-        Error::UnexpectedResponse(format!(
-            "failed to decode envelope: {e}; body: {}",
-            String::from_utf8_lossy(body)
-        ))
-    })?;
+    let envelope: Envelope<T> = serde_json::from_slice(body)
+        .map_err(|e| unexpected_decode_error("envelope", e, body.len()))?;
     Ok(envelope.data)
 }
 
@@ -227,20 +256,21 @@ fn decode_data<T: DeserializeOwned>(
     match decode_envelope(status, headers, body) {
         Ok(data) => Ok(data),
         Err(Error::UnexpectedResponse(_)) if status.is_success() => serde_json::from_slice(body)
-            .map_err(|e| {
-                Error::UnexpectedResponse(format!(
-                    "failed to decode response body: {e}; body: {}",
-                    String::from_utf8_lossy(body)
-                ))
-            }),
+            .map_err(|e| unexpected_decode_error("response body", e, body.len())),
         Err(err) => Err(err),
     }
+}
+
+fn unexpected_decode_error(context: &str, error: serde_json::Error, body_len: usize) -> Error {
+    Error::UnexpectedResponse(format!(
+        "failed to decode {context}: {error}; body length: {body_len} bytes"
+    ))
 }
 
 fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Error {
     let retry_after = retry_after_from(headers);
     let api = match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(serde_json::Value::Object(map)) => {
+        Ok(serde_json::Value::Object(mut map)) => {
             let code = map
                 .get("status")
                 .and_then(|v| v.as_u64())
@@ -254,8 +284,8 @@ fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Er
             // Standard error envelopes carry a `data` field. Bodies without one
             // (e.g. a route-miss `{ name, message, code, status }`) are kept
             // whole so their `name`/`code` survive.
-            let data = match map.get("data") {
-                Some(data) => data.clone(),
+            let data = match map.remove("data") {
+                Some(data) => data,
                 None => serde_json::Value::Object(map),
             };
             ApiError {
@@ -273,4 +303,96 @@ fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Er
         },
     };
     Error::Api(api)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `map_error` is private, so its route-miss vs resource-miss merge logic
+    // (the behavior `ApiError::data`'s doc comment promises) can only be
+    // exercised from an inline test, not from tests/unit.rs.
+
+    #[test]
+    fn map_error_keeps_whole_body_for_route_miss_shape() {
+        let body = "{\"name\":\"Not Found\",\"message\":\"P\u{e1}gina n\u{e3}o encontrada.\",\"code\":0,\"status\":404}"
+            .as_bytes();
+        let Error::Api(err) = map_error(StatusCode::NOT_FOUND, None, body) else {
+            panic!("expected Error::Api");
+        };
+        assert_eq!(err.status, 404);
+        assert_eq!(err.data["name"], "Not Found");
+        assert_eq!(err.data["code"], 0);
+    }
+
+    #[test]
+    fn map_error_extracts_data_for_resource_miss_shape() {
+        let body = br#"{"status":404,"message":"Signer not found","data":{"field":"id"}}"#;
+        let Error::Api(err) = map_error(StatusCode::NOT_FOUND, None, body) else {
+            panic!("expected Error::Api");
+        };
+        assert_eq!(err.status, 404);
+        assert_eq!(err.message, "Signer not found");
+        assert_eq!(err.data, serde_json::json!({"field": "id"}));
+    }
+
+    #[test]
+    fn public_request_omits_every_configured_credential() {
+        let base = BaseUrl::custom("https://api.example.invalid/v1").unwrap();
+        let credentials = [
+            Auth::ApiKey("placeholder-api-key".into()),
+            Auth::Bearer("placeholder-bearer".into()),
+            Auth::AccessToken("placeholder-access-token".into()),
+            Auth::AccessCode("placeholder-access-code".into()),
+        ];
+
+        for auth in credentials {
+            let http = HttpClient::new(
+                reqwest::Client::new(),
+                base.clone(),
+                auth,
+                "assinafy-test".into(),
+            );
+            let request = http
+                .request_public(Method::GET, "public/documents/document-id")
+                .unwrap()
+                .build()
+                .unwrap();
+
+            assert!(!request.headers().contains_key("x-api-key"));
+            assert!(
+                !request
+                    .headers()
+                    .contains_key(reqwest::header::AUTHORIZATION)
+            );
+            assert!(request.url().query().is_none());
+        }
+    }
+
+    #[test]
+    fn malformed_success_responses_do_not_expose_response_bodies() {
+        const SECRET: &str = "sentinel-response-secret";
+        let headers = HeaderMap::new();
+        let envelope = format!(
+            r#"{{"status":200,"message":"","data":{{"access_token":"{SECRET}","user":null,"accounts":[]}}}}"#
+        );
+        let direct = format!(r#"{{"access_token":"{SECRET}","user":null,"accounts":[]}}"#);
+
+        let errors = [
+            decode_envelope::<crate::models::LoginResult>(
+                StatusCode::OK,
+                &headers,
+                envelope.as_bytes(),
+            )
+            .unwrap_err(),
+            decode_data::<crate::models::LoginResult>(StatusCode::OK, &headers, direct.as_bytes())
+                .unwrap_err(),
+        ];
+
+        for error in errors {
+            let rendered = format!("{error} {error:?}");
+            assert!(!rendered.contains(SECRET));
+            assert!(rendered.contains("body length:"));
+        }
+    }
 }

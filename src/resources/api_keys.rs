@@ -11,7 +11,9 @@ use crate::http::HttpClient;
 /// Payload returned by [`ApiKeysApi::create`] and [`ApiKeysApi::get`].
 ///
 /// On creation the `api_key` field contains the full key once. Subsequent
-/// `get` calls return a masked value.
+/// `get` calls return a masked value that leaves only the last four
+/// characters visible. Keys are 64 characters of mixed-case alphanumerics
+/// plus `_` and `-`.
 ///
 /// # Response payload
 ///
@@ -19,10 +21,10 @@ use crate::http::HttpClient;
 /// {
 ///   "status": 200,
 ///   "message": "",
-///   "data": { "api_key": "****************************************" }
+///   "data": { "api_key": "****REDACTED" }
 /// }
 /// ```
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[non_exhaustive]
 pub struct ApiKeyResponse {
     /// The API key (full on creation; masked on retrieval).
@@ -46,7 +48,7 @@ impl fmt::Debug for ApiKeyResponse {
 /// ```json
 /// { "password": "s3cr3t-p4ssw0rd" }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CreateApiKeyBody {
     /// Current user password. Required before rotating the personal API key.
     pub password: String,
@@ -91,7 +93,7 @@ impl<'a> ApiKeysApi<'a> {
     /// {
     ///   "status": 200,
     ///   "message": "",
-    ///   "data": { "api_key": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8g9h0" }
+    ///   "data": { "api_key": "<generated-api-key>" }
     /// }
     /// ```
     pub async fn create(&self, body: &CreateApiKeyBody) -> Result<ApiKeyResponse> {
@@ -112,17 +114,28 @@ impl<'a> ApiKeysApi<'a> {
     /// {
     ///   "status": 200,
     ///   "message": "",
-    ///   "data": { "api_key": "****************************************" }
+    ///   "data": { "api_key": "****REDACTED" }
     /// }
     /// ```
+    ///
+    /// When no key has been generated, the API returns `data: null`; in that
+    /// case this method returns an [`ApiKeyResponse`] whose `api_key` is
+    /// `None`.
     pub async fn get(&self) -> Result<ApiKeyResponse> {
         let req = self.http.request(Method::GET, "users/api-keys")?;
-        self.http.send_envelope(req).await
+        let response: Option<ApiKeyResponse> = self.http.send_envelope(req).await?;
+        Ok(response.unwrap_or_default())
     }
 
     /// Delete the current API key.
     ///
     /// `DELETE /users/api-keys`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [] }
+    /// ```
     pub async fn delete(&self) -> Result<()> {
         let req = self.http.request(Method::DELETE, "users/api-keys")?;
         self.http.send_no_content(req).await

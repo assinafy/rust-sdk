@@ -8,7 +8,7 @@ use crate::http::HttpClient;
 use crate::models::LoginResult;
 
 /// `POST /login` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LoginBody {
     /// User email.
     pub email: String,
@@ -31,7 +31,7 @@ impl LoginBody {
 }
 
 /// `POST /authentication/social-login` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SocialLoginBody {
     /// Provider identifier. Currently only `"google"` is supported.
     pub provider: String,
@@ -62,7 +62,7 @@ impl SocialLoginBody {
 }
 
 /// `PUT /authentication/change-password` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ChangePasswordBody {
     /// User email.
     pub email: String,
@@ -90,7 +90,7 @@ impl ChangePasswordBody {
 }
 
 /// `PUT /authentication/request-password-reset` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RequestPasswordResetBody {
     /// Email of the user requesting a password reset.
     pub email: String,
@@ -106,7 +106,7 @@ impl RequestPasswordResetBody {
 }
 
 /// `PUT /authentication/reset-password` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ResetPasswordBody {
     /// User email.
     pub email: String,
@@ -139,7 +139,7 @@ impl ResetPasswordBody {
 }
 
 /// `POST /auth/link-social-login` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LinkSocialLoginBody {
     /// Provider identifier. Currently only `"google"` is supported.
     pub provider: String,
@@ -164,6 +164,15 @@ impl LinkSocialLoginBody {
     pub fn google<T: Into<String>>(token: T) -> Self {
         Self::new("google", token)
     }
+}
+
+/// Email echoed by the password-management endpoints after a successful
+/// request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[non_exhaustive]
+pub struct EmailResult {
+    /// Email address associated with the completed operation.
+    pub email: String,
 }
 
 /// Authentication endpoints.
@@ -196,7 +205,7 @@ impl<'a> AuthApi<'a> {
     /// # Request payload
     ///
     /// ```json
-    /// { "email": "user@example.com", "password": "s3cr3t-p4ss" }
+    /// { "email": "user@example.invalid", "password": "s3cr3t-p4ss" }
     /// ```
     ///
     /// # Response payload
@@ -208,9 +217,9 @@ impl<'a> AuthApi<'a> {
     ///   "data": {
     ///     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     ///     "user": {
-    ///       "id": "102d25a489f34a275d31a16045fd",
+    ///       "id": "acc_1234567890abcdef12345678",
     ///       "name": "Bill Madeira",
-    ///       "email": "user@example.com",
+    ///       "email": "user@example.invalid",
     ///       "telephone": null,
     ///       "government_id": null,
     ///       "is_email_verified": true,
@@ -220,7 +229,7 @@ impl<'a> AuthApi<'a> {
     ///     },
     ///     "accounts": [
     ///       {
-    ///         "id": "102d25a489f34a275d31a16045fd",
+    ///         "id": "acc_1234567890abcdef12345678",
     ///         "name": "Feba Capital",
     ///         "roles": ["owner"],
     ///         "is_delete_allowed": false,
@@ -231,7 +240,7 @@ impl<'a> AuthApi<'a> {
     /// }
     /// ```
     pub async fn login(&self, body: &LoginBody) -> Result<LoginResult> {
-        let req = self.http.request(Method::POST, "login")?.json(body);
+        let req = self.http.request_public(Method::POST, "login")?.json(body);
         self.http.send_envelope(req).await
     }
 
@@ -254,9 +263,9 @@ impl<'a> AuthApi<'a> {
     ///   "data": {
     ///     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     ///     "user": {
-    ///       "id": "102d25a489f34a275d31a16045fd",
+    ///       "id": "acc_1234567890abcdef12345678",
     ///       "name": "Bill Madeira",
-    ///       "email": "user@example.com",
+    ///       "email": "user@example.invalid",
     ///       "telephone": null,
     ///       "government_id": null,
     ///       "is_email_verified": true,
@@ -266,7 +275,7 @@ impl<'a> AuthApi<'a> {
     ///     },
     ///     "accounts": [
     ///       {
-    ///         "id": "102d25a489f34a275d31a16045fd",
+    ///         "id": "acc_1234567890abcdef12345678",
     ///         "name": "Feba Capital",
     ///         "roles": ["owner"],
     ///         "is_delete_allowed": false,
@@ -279,7 +288,7 @@ impl<'a> AuthApi<'a> {
     pub async fn social_login(&self, body: &SocialLoginBody) -> Result<LoginResult> {
         let req = self
             .http
-            .request(Method::POST, "authentication/social-login")?
+            .request_public(Method::POST, "authentication/social-login")?
             .json(body);
         self.http.send_envelope(req).await
     }
@@ -294,7 +303,7 @@ impl<'a> AuthApi<'a> {
     ///
     /// ```json
     /// {
-    ///   "email": "user@example.com",
+    ///   "email": "user@example.invalid",
     ///   "password": "0ld_p4ssw0rd",
     ///   "new_password": "N3w_p4ssw0rd"
     /// }
@@ -302,17 +311,15 @@ impl<'a> AuthApi<'a> {
     ///
     /// # Response payload
     ///
-    /// Success returns a bare envelope with no data payload.
-    ///
     /// ```json
-    /// { "status": 200, "message": "", "data": [] }
+    /// { "status": 200, "message": "", "data": { "email": "user@example.invalid" } }
     /// ```
-    pub async fn change_password(&self, body: &ChangePasswordBody) -> Result<()> {
+    pub async fn change_password(&self, body: &ChangePasswordBody) -> Result<EmailResult> {
         let req = self
             .http
             .request(Method::PUT, "authentication/change-password")?
             .json(body);
-        self.http.send_no_content(req).await
+        self.http.send_envelope(req).await
     }
 
     /// Request a password-reset email.
@@ -322,22 +329,23 @@ impl<'a> AuthApi<'a> {
     /// # Request payload
     ///
     /// ```json
-    /// { "email": "user@example.com" }
+    /// { "email": "user@example.invalid" }
     /// ```
     ///
     /// # Response payload
     ///
-    /// Success returns a bare envelope with no data payload.
-    ///
     /// ```json
-    /// { "status": 200, "message": "", "data": [] }
+    /// { "status": 200, "message": "", "data": { "email": "user@example.invalid" } }
     /// ```
-    pub async fn request_password_reset(&self, body: &RequestPasswordResetBody) -> Result<()> {
+    pub async fn request_password_reset(
+        &self,
+        body: &RequestPasswordResetBody,
+    ) -> Result<EmailResult> {
         let req = self
             .http
-            .request(Method::PUT, "authentication/request-password-reset")?
+            .request_public(Method::PUT, "authentication/request-password-reset")?
             .json(body);
-        self.http.send_no_content(req).await
+        self.http.send_envelope(req).await
     }
 
     /// Complete a password reset using the emailed token.
@@ -350,7 +358,7 @@ impl<'a> AuthApi<'a> {
     ///
     /// ```json
     /// {
-    ///   "email": "user@example.com",
+    ///   "email": "user@example.invalid",
     ///   "token": "b3ac64d6c55b3ac64d6c55",
     ///   "new_password": "N3w_p4ssw0rd"
     /// }
@@ -358,17 +366,15 @@ impl<'a> AuthApi<'a> {
     ///
     /// # Response payload
     ///
-    /// Success returns a bare envelope with no data payload.
-    ///
     /// ```json
-    /// { "status": 200, "message": "", "data": [] }
+    /// { "status": 200, "message": "", "data": { "email": "user@example.invalid" } }
     /// ```
-    pub async fn reset_password(&self, body: &ResetPasswordBody) -> Result<()> {
+    pub async fn reset_password(&self, body: &ResetPasswordBody) -> Result<EmailResult> {
         let req = self
             .http
-            .request(Method::PUT, "authentication/reset-password")?
+            .request_public(Method::PUT, "authentication/reset-password")?
             .json(body);
-        self.http.send_no_content(req).await
+        self.http.send_envelope(req).await
     }
 
     /// Link a social-login provider to the authenticated user's account.
@@ -380,6 +386,12 @@ impl<'a> AuthApi<'a> {
     ///
     /// ```json
     /// { "provider": "google", "token": "ya29.a0Af…" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "" }
     /// ```
     pub async fn link_social_login(&self, body: &LinkSocialLoginBody) -> Result<()> {
         let req = self

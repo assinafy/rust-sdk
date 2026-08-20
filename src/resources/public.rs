@@ -8,43 +8,70 @@ use crate::http::HttpClient;
 use crate::models::PublicDocument;
 
 /// Body for `PUT /public/documents/{document_id}/send-token`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SendTokenBody {
-    /// Email address or WhatsApp phone number that should receive the token.
-    pub recipient: String,
-    /// Delivery channel, usually `"email"` or `"whatsapp"`.
-    pub channel: String,
+    /// Email address that should receive the token.
+    pub email: String,
 }
 
 impl SendTokenBody {
-    /// Build a token request for a recipient and channel.
-    pub fn new<R, C>(recipient: R, channel: C) -> Self
-    where
-        R: Into<String>,
-        C: Into<String>,
-    {
+    /// Build an email token request.
+    pub fn new<S: Into<String>>(email: S) -> Self {
+        Self {
+            email: email.into(),
+        }
+    }
+
+    /// Build an email token request.
+    pub fn email<S: Into<String>>(email: S) -> Self {
+        Self::new(email)
+    }
+}
+
+/// Legacy sandbox body for
+/// `PUT /public/documents/{document_id}/send-token`.
+///
+/// Production expects [`SendTokenBody`]'s `{ "email": ... }` payload. Some
+/// older sandbox deployments instead require both the recipient and channel:
+///
+/// ```json
+/// { "recipient": "user@example.invalid", "channel": "email" }
+/// ```
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LegacySendTokenBody {
+    /// Address or phone number that should receive the token.
+    pub recipient: String,
+    /// Delivery channel understood by the legacy deployment.
+    pub channel: String,
+}
+
+impl LegacySendTokenBody {
+    /// Build a legacy sandbox token request for an explicit channel.
+    #[deprecated(note = "sandbox compatibility only; production uses SendTokenBody")]
+    pub fn new<R: Into<String>, C: Into<String>>(recipient: R, channel: C) -> Self {
         Self {
             recipient: recipient.into(),
             channel: channel.into(),
         }
     }
 
-    /// Build an email token request.
+    /// Build a legacy sandbox email-token request.
+    #[deprecated(note = "sandbox compatibility only; production uses SendTokenBody::email")]
     pub fn email<S: Into<String>>(recipient: S) -> Self {
-        Self::new(recipient, "email")
-    }
-
-    /// Build a WhatsApp token request.
-    pub fn whatsapp<S: Into<String>>(recipient: S) -> Self {
-        Self::new(recipient, "whatsapp")
+        Self {
+            recipient: recipient.into(),
+            channel: "email".to_owned(),
+        }
     }
 }
 
-/// Payload returned by `PUT /public/documents/{document_id}/send-token`.
+/// Legacy payload used by older deployments of
+/// `PUT /public/documents/{document_id}/send-token`.
 ///
-/// The endpoint's success response is not fully specified and some deployments
-/// return only a status envelope; every field is therefore optional so the
-/// response always deserializes.
+/// The current API defines only a generic success envelope and
+/// [`PublicApi::send_token`] therefore returns `()`. This model remains public
+/// so applications that deserialize a legacy response themselves do not lose
+/// source compatibility.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SendTokenResult {
@@ -83,36 +110,115 @@ impl<'a> PublicApi<'a> {
     ///   "data": {
     ///     "resource": "document",
     ///     "id": "103b03b95d7951922360a1626727",
+    ///     "account_id": "acc_1234567890abcdef12345678",
+    ///     "template_id": null,
     ///     "name": "test.pdf",
-    ///     "page_count": "1",
-    ///     "created_by": "Multica Test"
+    ///     "status": "metadata_ready",
+    ///     "artifacts": { "original": "https://files.example.invalid/original.pdf" },
+    ///     "is_closed": false,
+    ///     "signing_url": "https://sign.example.invalid/103b03b95d7951922360a1626727",
+    ///     "decline_reason": null,
+    ///     "declined_by": null,
+    ///     "tags": [],
+    ///     "assignment": null,
+    ///     "pages": [],
+    ///     "created_at": "2026-08-20T12:00:00Z",
+    ///     "updated_at": "2026-08-20T12:01:00Z"
     ///   }
     /// }
     /// ```
+    ///
+    /// Older deployments may instead return the reduced legacy fields
+    /// `page_count` and `created_by`; [`PublicDocument`] accepts both shapes.
     pub async fn document<S: AsRef<str>>(&self, document_id: S) -> Result<PublicDocument> {
         let path = format!("public/documents/{}", document_id.as_ref());
-        let req = self.http.request(Method::GET, &path)?;
+        let req = self.http.request_public(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
 
-    /// Send a signer access token to the recipient by email or WhatsApp.
+    /// Send a signer access token to the signer by email.
     ///
-    /// `PUT /public/documents/{document_id}/send-token`. The recipient must be a
-    /// signer on the document. Returns `None` when the API responds with an
-    /// empty success envelope.
+    /// `PUT /public/documents/{document_id}/send-token`. The email address must
+    /// belong to a signer on the document.
     ///
     /// # Request payload
     ///
     /// ```json
-    /// { "recipient": "signer@example.com", "channel": "email" }
+    /// { "email": "user@example.invalid" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "" }
     /// ```
     pub async fn send_token<S: AsRef<str>>(
         &self,
         document_id: S,
         body: &SendTokenBody,
-    ) -> Result<Option<SendTokenResult>> {
-        let path = format!("public/documents/{}/send-token", document_id.as_ref());
-        let req = self.http.request(Method::PUT, &path)?.json(body);
-        self.http.send_envelope(req).await
+    ) -> Result<()> {
+        self.send_token_payload(document_id.as_ref(), body).await
+    }
+
+    /// Send a signer access token using the legacy sandbox payload.
+    ///
+    /// `PUT /public/documents/{document_id}/send-token`. This compatibility
+    /// method requires no authentication and sends the older request shape.
+    /// Production callers should use [`Self::send_token`] instead.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "recipient": "user@example.invalid", "channel": "email" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [] }
+    /// ```
+    #[deprecated(note = "sandbox compatibility only; production uses PublicApi::send_token")]
+    pub async fn send_token_legacy<S: AsRef<str>>(
+        &self,
+        document_id: S,
+        body: &LegacySendTokenBody,
+    ) -> Result<()> {
+        self.send_token_payload(document_id.as_ref(), body).await
+    }
+
+    async fn send_token_payload<T: Serialize + ?Sized>(
+        &self,
+        document_id: &str,
+        body: &T,
+    ) -> Result<()> {
+        let path = format!("public/documents/{document_id}/send-token");
+        let req = self.http.request_public(Method::PUT, &path)?.json(body);
+        self.http.send_no_content(req).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LegacySendTokenBody, SendTokenBody};
+
+    #[test]
+    #[allow(deprecated)]
+    fn production_and_legacy_send_token_bodies_stay_distinct() {
+        let production =
+            serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap();
+        let legacy =
+            serde_json::to_value(LegacySendTokenBody::email("user@example.invalid")).unwrap();
+
+        assert_eq!(
+            production,
+            serde_json::json!({ "email": "user@example.invalid" })
+        );
+        assert_eq!(
+            legacy,
+            serde_json::json!({
+                "recipient": "user@example.invalid",
+                "channel": "email"
+            })
+        );
     }
 }

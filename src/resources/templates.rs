@@ -61,7 +61,7 @@ impl CreateTemplateRequest {
     }
 
     fn into_form(self) -> Result<Form> {
-        let part = Part::bytes(self.bytes.to_vec())
+        let part = Part::stream(self.bytes)
             .file_name(self.filename)
             .mime_str(&self.mime)
             .map_err(|e| Error::Config(format!("invalid mime `{}`: {e}", self.mime)))?;
@@ -126,20 +126,20 @@ impl<'a> ListTemplatesRequest<'a> {
     /// Execute the request.
     ///
     /// `GET /accounts/{account_id}/templates`. Pagination is carried in
-    /// `X-Pagination-*` response headers; the body is the enveloped array
-    /// (`default_document_tags` is omitted from list items).
+    /// `X-Pagination-*` response headers; the body is the enveloped array.
+    /// List items omit `resource`, `default_document_tags`, and per-page
+    /// `fields` — [`TemplatesApi::get`] returns all three.
     ///
     /// # Response payload
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
     ///   {
-    ///     "resource": "template",
     ///     "id": "103b03b8e5f14a2c9d7e0011a2b3",
     ///     "name": "service-agreement.pdf",
     ///     "document_name": "Service Agreement",
     ///     "message": "Please review and sign.",
-    ///     "status": "ready",
+    ///     "status": "Ready",
     ///     "pages": [
     ///       { "id": "103b03b8c1a0", "number": 1, "height": 1651, "width": 1275,
     ///         "download_url": "https://sandbox.assinafy.com.br/v1/accounts/102d25a4.../templates/103b03b8.../pages/103b03b8.../download" }
@@ -189,8 +189,13 @@ impl<'a> ListTemplatesRequest<'a> {
 /// # Request payload
 ///
 /// One entry in the `signers[]` array of the create/estimate body. `role_id`
-/// is always required; `id` binds an existing signer (required by the create
-/// endpoint), while inline signer fields resolve one by name/email.
+/// is always required. [`create_document`](TemplatesApi::create_document)
+/// additionally requires `id` — the signer must already exist in the
+/// account, so create it with
+/// [`SignersApi::create`](crate::resources::SignersApi::create) first and
+/// bind it with [`TemplateDocumentSigner::existing`].
+/// [`estimate_cost`](TemplatesApi::estimate_cost) needs only `role_id`, so
+/// [`TemplateDocumentSigner::role`] is enough there.
 ///
 /// ```json
 /// {
@@ -265,6 +270,18 @@ impl TemplateDocumentSigner {
     }
 
     /// Create an inline signer for a template role.
+    ///
+    /// Live sandbox calls to
+    /// [`create_document`](TemplatesApi::create_document) with a `signers[]`
+    /// entry that omits `id` are rejected with a 400 — the endpoint requires
+    /// a signer that already exists in the account, matching the spec's
+    /// "the signers must already exist in the account". Create the signer
+    /// with [`SignersApi::create`](crate::resources::SignersApi::create),
+    /// then bind it with [`TemplateDocumentSigner::existing`].
+    #[deprecated(
+        since = "2.0.0",
+        note = "create_document requires an existing signer id; use TemplateDocumentSigner::existing after SignersApi::create"
+    )]
     pub fn inline<R, N>(role_id: R, full_name: N) -> Self
     where
         R: Into<String>,
@@ -331,9 +348,38 @@ pub struct EditorField {
     /// Field identifier, matching the `field_id` of an editor field on the
     /// template.
     pub field_id: String,
-    /// Value to assign to the field. Usually a string, but the API accepts any
-    /// JSON scalar.
+    /// Value to assign to the field. The production API requires a string;
+    /// the broad JSON type remains for source compatibility and is validated
+    /// by [`TemplatesApi::create_document`] before a request is sent.
     pub value: serde_json::Value,
+}
+
+fn validate_create_document(body: &CreateDocumentFromTemplateBody) -> Result<()> {
+    if body.signers.is_empty() {
+        return Err(Error::Config(
+            "template document creation requires at least one signer".into(),
+        ));
+    }
+    if body
+        .signers
+        .iter()
+        .any(|signer| signer.id.as_deref().is_none_or(str::is_empty))
+    {
+        return Err(Error::Config(
+            "every template document signer must have an id".into(),
+        ));
+    }
+    if let Some(field) = body
+        .editor_fields
+        .iter()
+        .find(|field| !field.value.is_string())
+    {
+        return Err(Error::Config(format!(
+            "template editor field `{}` value must be a string",
+            field.field_id
+        )));
+    }
+    Ok(())
 }
 
 impl EditorField {
@@ -416,8 +462,11 @@ impl CreateDocumentFromTemplateBody {
     }
 
     /// Set signer bindings.
-    pub fn signers(mut self, signers: Vec<TemplateDocumentSigner>) -> Self {
-        self.signers = signers;
+    pub fn signers<I>(mut self, signers: I) -> Self
+    where
+        I: IntoIterator<Item = TemplateDocumentSigner>,
+    {
+        self.signers = signers.into_iter().collect();
         self
     }
 
@@ -441,9 +490,43 @@ impl CreateDocumentFromTemplateBody {
     }
 }
 
-/// Body for the estimate-cost endpoint — same shape as
-/// [`CreateDocumentFromTemplateBody`].
+/// Body accepted by the estimate-cost endpoint.
+///
+/// Kept as an alias for source compatibility. Before sending, the SDK projects
+/// it onto the documented pricing fields: each signer's `role_id`,
+/// `verification_method`, and `notification_methods`. Create-only document and
+/// signer data are never emitted to the estimate endpoint.
 pub type EstimateTemplateCostBody = CreateDocumentFromTemplateBody;
+
+#[derive(Serialize)]
+struct EstimateTemplateSignerPayload<'a> {
+    role_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_method: Option<&'a crate::models::VerificationMethod>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notification_methods: Option<&'a Vec<crate::models::NotificationMethod>>,
+}
+
+#[derive(Serialize)]
+struct EstimateTemplatePayload<'a> {
+    signers: Vec<EstimateTemplateSignerPayload<'a>>,
+}
+
+impl<'a> From<&'a EstimateTemplateCostBody> for EstimateTemplatePayload<'a> {
+    fn from(body: &'a EstimateTemplateCostBody) -> Self {
+        Self {
+            signers: body
+                .signers
+                .iter()
+                .map(|signer| EstimateTemplateSignerPayload {
+                    role_id: &signer.role_id,
+                    verification_method: signer.verification_method.as_ref(),
+                    notification_methods: signer.notification_methods.as_ref(),
+                })
+                .collect(),
+        }
+    }
+}
 
 /// Template endpoints for a specific account.
 #[derive(Debug)]
@@ -476,7 +559,35 @@ impl<'a> TemplatesApi<'a> {
     /// `GET /accounts/{account_id}/templates/{template_id}`. **Not part of the
     /// published spec** — verified against the live API. The single-template
     /// response additionally includes `default_document_tags` and per-page
-    /// `fields`.
+    /// `fields`, neither of which appear on list items.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "resource": "template",
+    ///   "id": "103b0716216a0a1d57f5a6ac63a4",
+    ///   "name": "service-agreement.pdf",
+    ///   "document_name": "service-agreement.pdf",
+    ///   "message": null,
+    ///   "status": "Ready",
+    ///   "pages": [
+    ///     { "id": "103b07167080eeee6abb709dfa0e", "number": 1,
+    ///       "height": 1651, "width": 1275,
+    ///       "download_url": "https://…/pages/103b07167080eeee6abb709dfa0e/download",
+    ///       "fields": [] }
+    ///   ],
+    ///   "roles": [
+    ///     { "id": "103b0716357cccee66f6047f3577", "name": "TemplateEditor",
+    ///       "assignment_type": "Editor",
+    ///       "created_at": "2026-07-20T18:06:41Z",
+    ///       "updated_at": "2026-07-20T18:06:41Z" }
+    ///   ],
+    ///   "tags": [],
+    ///   "created_at": "2026-07-20T18:06:40Z",
+    ///   "updated_at": "2026-07-20T18:06:43Z",
+    ///   "default_document_tags": [] } }
+    /// ```
     pub async fn get<S: AsRef<str>>(&self, template_id: S) -> Result<Template> {
         let path = format!(
             "accounts/{}/templates/{}",
@@ -608,7 +719,7 @@ impl<'a> TemplatesApi<'a> {
     /// { "status": 200, "message": "", "data": {
     ///   "resource": "document",
     ///   "id": "103acccd24234c07858ffddf6d84",
-    ///   "account_id": "102d25a489f34a275d31a16045fd",
+    ///   "account_id": "acc_1234567890abcdef12345678",
     ///   "template_id": "103b03b8e5f14a2c9d7e0011a2b3",
     ///   "name": "Service Agreement — Acme",
     ///   "status": "uploaded",
@@ -629,6 +740,7 @@ impl<'a> TemplatesApi<'a> {
         template_id: S,
         body: &CreateDocumentFromTemplateBody,
     ) -> Result<Document> {
+        validate_create_document(body)?;
         let path = format!(
             "accounts/{}/templates/{}/documents",
             self.account_id,
@@ -681,7 +793,71 @@ impl<'a> TemplatesApi<'a> {
             self.account_id,
             template_id.as_ref()
         );
-        let req = self.http.request(Method::POST, &path)?.json(body);
+        let payload = EstimateTemplatePayload::from(body);
+        let req = self.http.request(Method::POST, &path)?.json(&payload);
         self.http.send_envelope(req).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{NotificationMethod, VerificationMethod};
+
+    #[test]
+    fn estimate_payload_strips_create_only_document_and_signer_fields() {
+        let body = CreateDocumentFromTemplateBody::default()
+            .name("not part of pricing")
+            .message("not part of pricing")
+            .expires_at("2026-12-31T23:59:59Z")
+            .signers(vec![
+                TemplateDocumentSigner::existing("role-id", "signer-id")
+                    .verification_method(VerificationMethod::Whatsapp)
+                    .notification_methods(vec![NotificationMethod::Whatsapp])
+                    .step(2),
+            ])
+            .editor_fields([EditorField::new("field-id", "value")])
+            .tags(["tag"]);
+
+        assert_eq!(
+            serde_json::to_value(EstimateTemplatePayload::from(&body)).unwrap(),
+            serde_json::json!({
+                "signers": [{
+                    "role_id": "role-id",
+                    "verification_method": "Whatsapp",
+                    "notification_methods": ["Whatsapp"]
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn create_document_rejects_non_string_editor_values_before_sending() {
+        let body = CreateDocumentFromTemplateBody::default()
+            .signers([TemplateDocumentSigner::existing("role-id", "signer-id")])
+            .editor_fields([EditorField::new("field-id", 42)]);
+        assert!(matches!(
+            validate_create_document(&body),
+            Err(Error::Config(_))
+        ));
+    }
+
+    #[test]
+    fn create_document_requires_existing_signers() {
+        assert!(matches!(
+            validate_create_document(&CreateDocumentFromTemplateBody::default()),
+            Err(Error::Config(_))
+        ));
+
+        let missing_id = CreateDocumentFromTemplateBody::default()
+            .signers([TemplateDocumentSigner::role("role-id")]);
+        assert!(matches!(
+            validate_create_document(&missing_id),
+            Err(Error::Config(_))
+        ));
+
+        let valid = CreateDocumentFromTemplateBody::default()
+            .signers([TemplateDocumentSigner::existing("role-id", "signer-id")]);
+        assert!(validate_create_document(&valid).is_ok());
     }
 }

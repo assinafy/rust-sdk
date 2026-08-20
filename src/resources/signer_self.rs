@@ -1,7 +1,8 @@
 //! Endpoints that operate on the currently authenticated signer.
 //!
-//! All routes here require an `Auth::AccessCode` credential
-//! (`?signer-access-code=...`).
+//! Most routes here require an `Auth::AccessCode` credential
+//! (`?signer-access-code=...`). The signer artifact-download route is the
+//! exception: the OpenAPI contract declares it unauthenticated.
 
 use bytes::Bytes;
 use reqwest::Method;
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::http::HttpClient;
-use crate::models::{ArtifactName, Document, SignDocumentItem, SignerSelf, SignerType};
+use crate::models::{ArtifactName, Document, SignDocumentItem, Signer, SignerSelf, SignerType};
 use crate::pagination::Page;
 
 /// Body for `POST /verify`.
@@ -17,17 +18,15 @@ use crate::pagination::Page;
 /// # Request payload
 ///
 /// ```json
-/// {
-///   "verification-code": "123456",
-///   "signer-access-code": "AbCd1234EfGh5678"
-/// }
+/// { "verification-code": "123456" }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct VerifyCodeBody {
     /// One-time code emailed or sent via WhatsApp to the signer.
     #[serde(rename = "verification-code")]
     pub code: String,
-    /// Signer access code. Usually supplied by [`crate::Auth::AccessCode`].
+    /// Legacy body copy of the signer access code. Current deployments read
+    /// this credential from [`crate::Auth::AccessCode`] in the query string.
     #[serde(rename = "signer-access-code", skip_serializing_if = "Option::is_none")]
     pub signer_access_code: Option<String>,
 }
@@ -41,7 +40,7 @@ impl VerifyCodeBody {
         }
     }
 
-    /// Include the signer access code in the JSON body.
+    /// Include the signer access code in the JSON body for a legacy deployment.
     pub fn access_code<S: Into<String>>(mut self, code: S) -> Self {
         self.signer_access_code = Some(code.into());
         self
@@ -57,14 +56,12 @@ impl VerifyCodeBody {
 /// ```json
 /// {
 ///   "full_name": "Maria Silva",
-///   "email": "maria.silva@example.com",
+///   "email": "user@example.invalid",
 ///   "government_id": "123.456.789-09",
-///   "whatsapp_phone_number": "+5511998877665",
-///   "has_accepted_terms": true,
-///   "code": "123456"
+///   "has_accepted_terms": true
 /// }
 /// ```
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ConfirmSignerDataBody {
     /// Confirmed/updated full name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,13 +73,13 @@ pub struct ConfirmSignerDataBody {
     /// documented confirm-data body expects.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub government_id: Option<String>,
-    /// Confirmed/updated WhatsApp phone number.
+    /// Legacy sandbox extension for the WhatsApp phone number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
     /// Whether the signer accepts the terms as part of confirmation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_accepted_terms: Option<bool>,
-    /// Verification code, when the API requires it inline.
+    /// Legacy sandbox extension for an inline verification code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 }
@@ -261,7 +258,7 @@ impl<'a> ListSignerDocumentsRequest<'a> {
     ///   "data": [
     ///     {
     ///       "id": "103acccd24234c07858ffddf6d84",
-    ///       "account_id": "102d25a489f34a275d31a16045fd",
+    ///       "account_id": "acc_1234567890abcdef12345678",
     ///       "template_id": null,
     ///       "name": "contract.pdf",
     ///       "status": "metadata_ready",
@@ -331,7 +328,7 @@ impl<'a> SignerSelfApi<'a> {
     ///     "resource": "signer",
     ///     "id": "102d25a4a1b2c3d4e5f60718293a4b5c",
     ///     "full_name": "Maria Silva",
-    ///     "email": "maria.silva@example.com",
+    ///     "email": "user@example.invalid",
     ///     "whatsapp_phone_number": "+5511998877665",
     ///     "has_accepted_terms": true,
     ///     "has_signature": true,
@@ -351,29 +348,19 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// # Request payload
     ///
-    /// A body is sent only when a signer access code is configured on the
-    /// client; otherwise the request has no body.
-    ///
-    /// ```json
-    /// {
-    ///   "signer-access-code": "AbCd1234EfGh5678"
-    /// }
-    /// ```
+    /// The request has no body. [`crate::Auth::AccessCode`] supplies the
+    /// required `signer-access-code` query parameter.
     ///
     /// # Response payload
     ///
     /// ```json
     /// {
     ///   "status": 200,
-    ///   "message": "",
-    ///   "data": []
+    ///   "message": ""
     /// }
     /// ```
     pub async fn accept_terms(&self) -> Result<()> {
-        let mut req = self.http.request(Method::PUT, "signers/accept-terms")?;
-        if let Some(code) = self.http.auth().signer_access_code() {
-            req = req.json(&serde_json::json!({ "signer-access-code": code }));
-        }
+        let req = self.http.request(Method::PUT, "signers/accept-terms")?;
         self.http.send_no_content(req).await
     }
 
@@ -383,14 +370,11 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// # Request payload
     ///
-    /// The signer access code is injected automatically when configured on the
-    /// client.
+    /// [`crate::Auth::AccessCode`] supplies the signer access code as the
+    /// documented query parameter.
     ///
     /// ```json
-    /// {
-    ///   "verification-code": "123456",
-    ///   "signer-access-code": "AbCd1234EfGh5678"
-    /// }
+    /// { "verification-code": "123456" }
     /// ```
     ///
     /// # Response payload
@@ -398,20 +382,11 @@ impl<'a> SignerSelfApi<'a> {
     /// ```json
     /// {
     ///   "status": 200,
-    ///   "message": "",
-    ///   "data": []
+    ///   "message": ""
     /// }
     /// ```
     pub async fn verify(&self, body: &VerifyCodeBody) -> Result<()> {
-        let mut json = serde_json::to_value(body)?;
-        if let (Some(code), Some(object)) =
-            (self.http.auth().signer_access_code(), json.as_object_mut())
-        {
-            object
-                .entry("signer-access-code")
-                .or_insert_with(|| serde_json::Value::String(code.to_owned()));
-        }
-        let req = self.http.request(Method::POST, "verify")?.json(&json);
+        let req = self.http.request(Method::POST, "verify")?.json(body);
         self.http.send_no_content(req).await
     }
 
@@ -424,7 +399,7 @@ impl<'a> SignerSelfApi<'a> {
     /// ```json
     /// {
     ///   "full_name": "Maria Silva",
-    ///   "email": "maria.silva@example.com",
+    ///   "email": "user@example.invalid",
     ///   "government_id": "123.456.789-09",
     ///   "whatsapp_phone_number": "+5511998877665",
     ///   "has_accepted_terms": true
@@ -437,17 +412,24 @@ impl<'a> SignerSelfApi<'a> {
     /// {
     ///   "status": 200,
     ///   "message": "",
-    ///   "data": []
+    ///   "data": {
+    ///     "resource": "signer",
+    ///     "id": "102d25a4a1b2c3d4e5f60718293a4b5c",
+    ///     "full_name": "Maria Silva",
+    ///     "email": "user@example.invalid",
+    ///     "whatsapp_phone_number": "+5511998877665",
+    ///     "has_accepted_terms": true
+    ///   }
     /// }
     /// ```
     pub async fn confirm_data<S: AsRef<str>>(
         &self,
         document_id: S,
         body: &ConfirmSignerDataBody,
-    ) -> Result<()> {
+    ) -> Result<Signer> {
         let path = format!("documents/{}/signers/confirm-data", document_id.as_ref());
         let req = self.http.request(Method::PUT, &path)?.json(body);
-        self.http.send_no_content(req).await
+        self.http.send_envelope(req).await
     }
 
     /// Retrieve the full signable document for the current signer.
@@ -462,7 +444,7 @@ impl<'a> SignerSelfApi<'a> {
     ///   "message": "",
     ///   "data": {
     ///     "id": "103acccd24234c07858ffddf6d84",
-    ///     "account_id": "102d25a489f34a275d31a16045fd",
+    ///     "account_id": "acc_1234567890abcdef12345678",
     ///     "template_id": null,
     ///     "name": "contract.pdf",
     ///     "status": "metadata_ready",
@@ -486,6 +468,24 @@ impl<'a> SignerSelfApi<'a> {
     /// ```
     pub async fn signable_document(&self) -> Result<Document> {
         let req = self.http.request(Method::GET, "sign")?;
+        self.http.send_data(req).await
+    }
+
+    /// Retrieve the signable document and record the terms-acceptance flag.
+    ///
+    /// `GET /sign?has_accepted_terms={has_accepted_terms}`. The response is
+    /// the same full [`Document`] payload shown by [`Self::signable_document`].
+    /// For digital-certificate signers, confirm their data and accept the terms
+    /// through [`Self::confirm_data`] before this request; the server checks
+    /// that prerequisite before processing this query parameter.
+    pub async fn signable_document_with_accepted_terms(
+        &self,
+        has_accepted_terms: bool,
+    ) -> Result<Document> {
+        let req = self
+            .http
+            .request(Method::GET, "sign")?
+            .query(&[("has_accepted_terms", has_accepted_terms)]);
         self.http.send_data(req).await
     }
 
@@ -514,7 +514,7 @@ impl<'a> SignerSelfApi<'a> {
     /// {
     ///   "status": 200,
     ///   "message": "",
-    ///   "data": []
+    ///   "data": {}
     /// }
     /// ```
     pub async fn sign<D: AsRef<str>, A: AsRef<str>, I>(
@@ -522,18 +522,13 @@ impl<'a> SignerSelfApi<'a> {
         document_id: D,
         assignment_id: A,
         items: I,
-    ) -> Result<()>
+    ) -> Result<serde_json::Value>
     where
         I: IntoIterator<Item = SignDocumentItem>,
     {
-        let path = format!(
-            "documents/{}/assignments/{}",
-            document_id.as_ref(),
-            assignment_id.as_ref()
-        );
-        let items: Vec<SignDocumentItem> = items.into_iter().collect();
-        let req = self.http.request(Method::POST, &path)?.json(&items);
-        self.http.send_no_content(req).await
+        crate::resources::AssignmentsApi::new(self.http)
+            .sign(document_id, assignment_id, items)
+            .await
     }
 
     /// Decline one assignment.
@@ -553,8 +548,7 @@ impl<'a> SignerSelfApi<'a> {
     /// ```json
     /// {
     ///   "status": 200,
-    ///   "message": "",
-    ///   "data": []
+    ///   "message": ""
     /// }
     /// ```
     pub async fn decline<D: AsRef<str>, A: AsRef<str>, R: AsRef<str>>(
@@ -563,16 +557,9 @@ impl<'a> SignerSelfApi<'a> {
         assignment_id: A,
         reason: R,
     ) -> Result<()> {
-        let path = format!(
-            "documents/{}/assignments/{}/reject",
-            document_id.as_ref(),
-            assignment_id.as_ref()
-        );
-        let req = self
-            .http
-            .request(Method::PUT, &path)?
-            .json(&serde_json::json!({ "decline_reason": reason.as_ref() }));
-        self.http.send_no_content(req).await
+        crate::resources::AssignmentsApi::new(self.http)
+            .reject(document_id, assignment_id, reason)
+            .await
     }
 
     /// Retrieve the document associated with a signer before verification.
@@ -587,7 +574,7 @@ impl<'a> SignerSelfApi<'a> {
     ///   "message": "",
     ///   "data": {
     ///     "id": "103acccd24234c07858ffddf6d84",
-    ///     "account_id": "102d25a489f34a275d31a16045fd",
+    ///     "account_id": "acc_1234567890abcdef12345678",
     ///     "template_id": null,
     ///     "name": "contract.pdf",
     ///     "status": "metadata_ready",
@@ -645,7 +632,7 @@ impl<'a> SignerSelfApi<'a> {
     ///   "data": [
     ///     {
     ///       "id": "103acccd24234c07858ffddf6d84",
-    ///       "account_id": "102d25a489f34a275d31a16045fd",
+    ///       "account_id": "acc_1234567890abcdef12345678",
     ///       "template_id": null,
     ///       "name": "contract.pdf",
     ///       "status": "metadata_ready",
@@ -694,8 +681,7 @@ impl<'a> SignerSelfApi<'a> {
     /// ```json
     /// {
     ///   "status": 200,
-    ///   "message": "",
-    ///   "data": []
+    ///   "message": ""
     /// }
     /// ```
     pub async fn sign_multiple(&self, body: &SignMultipleDocumentsBody) -> Result<()> {
@@ -742,6 +728,17 @@ impl<'a> SignerSelfApi<'a> {
     /// Download a signer-visible document artifact.
     ///
     /// `GET /signers/{signer_id}/documents/{document_id}/download/{artifact_name}`.
+    ///
+    /// Only `original`, `certificated`, `certificate-page`, `pades`, and `bundle` are
+    /// valid here — unlike [`DocumentsApi::download_artifact`](crate::resources::DocumentsApi::download_artifact),
+    /// [`ArtifactName::Thumbnail`] is **not** redirected on this signer-facing
+    /// route: no equivalent signer-facing thumbnail route exists to redirect
+    /// to, so passing it will 404.
+    ///
+    /// # Response
+    ///
+    /// The response body is the raw artifact bytes, not a JSON envelope. The
+    /// returned tuple carries the bytes and the response `Content-Type`.
     pub async fn download_document<S: AsRef<str>, D: AsRef<str>>(
         &self,
         signer_id: S,
@@ -755,14 +752,15 @@ impl<'a> SignerSelfApi<'a> {
             document_id.as_ref(),
             artifact.as_str()
         );
-        let req = self.http.request(Method::GET, &path)?;
+        let req = self.http.request_public(Method::GET, &path)?;
         self.http.send_download(req).await
     }
 
     /// Upload a signature or initial image.
     ///
-    /// The server stores the bytes as-is; supply a PNG or JPEG.
-    /// `POST /signature`.
+    /// `POST /signature`. The production contract accepts PNG bytes with
+    /// `Content-Type: image/png`. The explicit `content_type` argument is
+    /// retained for older deployments that also accept JPEG.
     ///
     /// The request body is the raw image bytes (not JSON); the image kind is
     /// selected via the `?type=signature|initial` query parameter.
@@ -772,8 +770,7 @@ impl<'a> SignerSelfApi<'a> {
     /// ```json
     /// {
     ///   "status": 200,
-    ///   "message": "",
-    ///   "data": []
+    ///   "message": ""
     /// }
     /// ```
     pub async fn upload_signature(
@@ -782,11 +779,46 @@ impl<'a> SignerSelfApi<'a> {
         content_type: &str,
         bytes: impl Into<Bytes>,
     ) -> Result<()> {
+        self.upload_signature_with_reuse(kind, content_type, bytes, None)
+            .await
+    }
+
+    /// Upload a signature or initial image, optionally setting the signer's
+    /// `is_signature_reusable` flag.
+    ///
+    /// `POST /signature?type=signature|initial&reuse=true|false`.
+    /// Production callers should pass `image/png`; other media types are a
+    /// legacy compatibility extension.
+    ///
+    /// `reuse = Some(v)` records whether the signer opted to reuse this
+    /// signature in future processes; `None` omits the parameter and leaves
+    /// the flag unchanged. This is the only endpoint that can set
+    /// [`SignerSelf::is_signature_reusable`](crate::models::SignerSelf).
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": ""
+    /// }
+    /// ```
+    pub async fn upload_signature_with_reuse(
+        &self,
+        kind: SignerType,
+        content_type: &str,
+        bytes: impl Into<Bytes>,
+        reuse: Option<bool>,
+    ) -> Result<()> {
         let bytes = bytes.into();
-        let req = self
+        let mut req = self
             .http
             .request(Method::POST, "signature")?
-            .query(&[("type", kind.as_str())])
+            .query(&[("type", kind.as_str())]);
+        if let Some(v) = reuse {
+            req = req.query(&[("reuse", v)]);
+        }
+        let req = req
             .header(reqwest::header::CONTENT_TYPE, content_type)
             .body(bytes);
         self.http.send_no_content(req).await
@@ -795,6 +827,11 @@ impl<'a> SignerSelfApi<'a> {
     /// Download the previously uploaded signature or initial image.
     ///
     /// `GET /signature/{type}`.
+    ///
+    /// # Response
+    ///
+    /// The response body is the raw image bytes, not a JSON envelope. The
+    /// returned tuple carries the bytes and the response `Content-Type`.
     pub async fn download_signature(&self, kind: SignerType) -> Result<(Bytes, String)> {
         let path = format!("signature/{}", kind.as_str());
         let req = self.http.request(Method::GET, &path)?;

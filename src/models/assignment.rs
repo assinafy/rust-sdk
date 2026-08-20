@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Delivery method for an assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +37,8 @@ pub enum VerificationMethod {
     Email,
     /// WhatsApp code.
     Whatsapp,
+    /// ICP-Brasil digital certificate.
+    DigitalCertificate,
     /// Skip verification (only allowed in specific configurations).
     Bypass,
     /// Any value the SDK does not yet model.
@@ -50,6 +52,7 @@ impl VerificationMethod {
         match self {
             VerificationMethod::Email => "Email",
             VerificationMethod::Whatsapp => "Whatsapp",
+            VerificationMethod::DigitalCertificate => "DigitalCertificate",
             VerificationMethod::Bypass => "Bypass",
             VerificationMethod::Other(s) => s.as_str(),
         }
@@ -168,8 +171,16 @@ pub struct AssignmentSigner {
     #[serde(default)]
     pub completed: Option<bool>,
     /// Delivery history for notifications sent to this signer.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub notification_history: Vec<NotificationHistoryEntry>,
+}
+
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// Copy-only recipient who receives the final signed document.
@@ -191,6 +202,40 @@ pub struct CopyReceiver {
     pub has_accepted_terms: bool,
 }
 
+/// Signer summary embedded in an [`AssignmentItem`].
+///
+/// Item payloads are intentionally smaller than the full assignment signer
+/// payload, so every field except the identifier is optional.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AssignmentItemSigner {
+    /// Signer identifier.
+    pub id: String,
+    /// Full name, when included.
+    #[serde(default)]
+    pub full_name: Option<String>,
+    /// Email address, when included.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// WhatsApp phone number, when included.
+    #[serde(default)]
+    pub whatsapp_phone_number: Option<String>,
+}
+
+/// Field summary embedded in an [`AssignmentItem`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AssignmentItemField {
+    /// Field identifier.
+    pub id: String,
+    /// Human-readable field name, when included.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Field type, such as `signature` or `virtual`.
+    #[serde(default, rename = "type")]
+    pub kind: Option<String>,
+}
+
 /// A single item within an assignment (signature placeholder, field, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -199,14 +244,16 @@ pub struct AssignmentItem {
     pub id: String,
     /// Page the item lives on, if any.
     #[serde(default)]
-    pub page: Option<serde_json::Value>,
+    pub page: Option<crate::models::document::DocumentPage>,
     /// Signer the item is assigned to.
     #[serde(default)]
-    pub signer: Option<serde_json::Value>,
+    pub signer: Option<AssignmentItemSigner>,
     /// Field definition, if applicable.
     #[serde(default)]
-    pub field: Option<serde_json::Value>,
-    /// Display settings for the item.
+    pub field: Option<AssignmentItemField>,
+    /// Display settings for the item. Genuinely polymorphic on the wire
+    /// (an array when unset, an object when configured), so it stays
+    /// untyped.
     #[serde(default)]
     pub display_settings: Option<serde_json::Value>,
     /// Captured value.
@@ -218,13 +265,22 @@ pub struct AssignmentItem {
 }
 
 /// Pre-built direct signing URL for one of the assignment signers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SigningUrl {
     /// Signer identifier.
     pub signer_id: String,
     /// Direct signing URL.
     pub url: String,
+}
+
+impl fmt::Debug for SigningUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SigningUrl")
+            .field("signer_id", &self.signer_id)
+            .field("url", &"**redacted**")
+            .finish()
+    }
 }
 
 /// Aggregated completion summary returned with an assignment.
@@ -270,7 +326,8 @@ pub struct Assignment {
     pub resource: Option<String>,
     /// Assignment identifier.
     pub id: String,
-    /// Document identifier.
+    /// Document identifier. Not present in the spec's `Assignment` schema
+    /// nor in any observed live response; always `None` in practice.
     #[serde(default)]
     pub document_id: Option<String>,
     /// Email of the user that created the assignment.
@@ -279,10 +336,13 @@ pub struct Assignment {
     /// Delivery method.
     #[serde(default)]
     pub method: Option<AssignmentMethod>,
-    /// Assignment status, when returned.
+    /// Assignment status. Not present in the spec's `Assignment` schema nor
+    /// in any observed live response; always `None` in practice.
     #[serde(default)]
     pub status: Option<String>,
-    /// Expiration timestamp using the legacy field name, when returned.
+    /// Expiration timestamp using the legacy field name. Not present in the
+    /// spec's `Assignment` schema nor in any observed live response; use
+    /// `expires_at` instead.
     #[serde(default)]
     pub expiration: Option<String>,
     /// Expiry timestamp (ISO-8601).
@@ -306,13 +366,16 @@ pub struct Assignment {
     /// Direct signing URLs.
     #[serde(default)]
     pub signing_urls: Vec<SigningUrl>,
-    /// Completion timestamp.
+    /// Completion timestamp. Not present in the spec's `Assignment` schema
+    /// nor in any observed live response; always `None` in practice.
     #[serde(default)]
     pub completed_at: Option<serde_json::Value>,
-    /// Creation timestamp.
+    /// Creation timestamp. Not present in the spec's `Assignment` schema nor
+    /// in any observed live response; always `None` in practice.
     #[serde(default)]
     pub created_at: Option<serde_json::Value>,
-    /// Last-modification timestamp.
+    /// Last-modification timestamp. Not present in the spec's `Assignment`
+    /// schema nor in any observed live response; always `None` in practice.
     #[serde(default)]
     pub updated_at: Option<serde_json::Value>,
 }
@@ -332,32 +395,11 @@ pub struct ResendNotificationResult {
     pub signer_id: Option<String>,
 }
 
-/// Itemized cost line returned by assignment notification resend estimates.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct ResendCostBreakdownItem {
-    /// Stable cost identifier.
-    pub code: String,
-    /// Human-readable cost name.
-    pub name: String,
-    /// Cost in credits.
-    pub cost: f64,
-}
+/// Backward-compatible name for a resend cost line.
+pub type ResendCostBreakdownItem = crate::models::cost::CostBreakdownItem;
 
-/// Cost estimate returned before resending one signer notification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct ResendCostEstimate {
-    /// Total cost in credits.
-    pub total: f64,
-    /// Itemized cost lines.
-    #[serde(default)]
-    pub breakdown: Vec<ResendCostBreakdownItem>,
-    /// Current account credit balance.
-    pub credit_balance: f64,
-    /// Whether the account has enough credits to resend.
-    pub has_sufficient_credits: bool,
-}
+/// Backward-compatible name for the standard cost-estimate response.
+pub type ResendCostEstimate = crate::models::cost::CostEstimate;
 
 /// One filled field submitted by the signer-facing sign endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,4 +463,20 @@ pub struct WhatsAppButton {
     /// Button URL, when present.
     #[serde(default)]
     pub url: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assignment_signer_accepts_nullable_notification_history() {
+        let signer: AssignmentSigner = serde_json::from_value(serde_json::json!({
+            "id": "signer-id",
+            "full_name": "Example Signer",
+            "notification_history": null
+        }))
+        .unwrap();
+        assert!(signer.notification_history.is_empty());
+    }
 }

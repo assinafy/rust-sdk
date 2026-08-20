@@ -15,9 +15,8 @@ use crate::models::{FieldDefinition, FieldType, FieldValidationResult};
 /// {
 ///   "type": "text",
 ///   "name": "Full name",
-///   "regex": "^.{2,}$",
-///   "is_required": false,
-///   "is_active": true
+///   "regex": "/^.{2,}$/",
+///   "is_required": false
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,13 +26,17 @@ pub struct CreateFieldBody {
     pub kind: String,
     /// Human-readable field name.
     pub name: String,
-    /// Optional validation regular expression.
+    /// Optional validation regular expression. Must be a delimited regex
+    /// literal (leading/trailing `/`, e.g. `"/^.{2,}$/"`) — a bare pattern
+    /// like `"^.{2,}$"` is live-verified to be rejected with a 400
+    /// ("Padrão RegEx inválido.").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub regex: Option<String>,
     /// Whether this field is required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_required: Option<bool>,
-    /// Whether this field is active.
+    /// Legacy sandbox extension controlling whether this field is active.
+    /// The current production create schema does not declare this field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
 }
@@ -54,7 +57,8 @@ impl CreateFieldBody {
         }
     }
 
-    /// Set the validation regular expression.
+    /// Set the validation regular expression. Pass a delimited regex literal
+    /// (e.g. `"/^[A-Z]{3}$/"`); a bare pattern is rejected with a 400.
     pub fn regex<S: Into<String>>(mut self, regex: S) -> Self {
         self.regex = Some(regex.into());
         self
@@ -66,7 +70,7 @@ impl CreateFieldBody {
         self
     }
 
-    /// Set whether the field is active.
+    /// Set the legacy sandbox `is_active` create field.
     pub fn active(mut self, active: bool) -> Self {
         self.is_active = Some(active);
         self
@@ -82,25 +86,26 @@ impl CreateFieldBody {
 ///
 /// ```json
 /// {
-///   "type": "text",
 ///   "name": "Full name (updated)",
 ///   "regex": null,
-///   "is_required": true,
 ///   "is_active": true
 /// }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateFieldBody {
-    /// New field type identifier.
+    /// Legacy sandbox extension for changing the field type.
     #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
     pub kind: Option<String>,
     /// New field name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// New validation regular expression. Use `Some(None)` to clear it.
+    /// Must be a delimited regex literal (e.g. `"/^[A-Z]{3}$/"`) — see
+    /// [`CreateFieldBody::regex`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub regex: Option<Option<String>>,
-    /// New required flag.
+    /// Legacy sandbox extension for changing the required flag. This behavior
+    /// is live-verified even though it is absent from the production schema.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_required: Option<bool>,
     /// New active flag.
@@ -114,7 +119,7 @@ impl UpdateFieldBody {
         Self::default()
     }
 
-    /// Set the field type.
+    /// Set the legacy sandbox field type.
     pub fn kind<S: Into<String>>(mut self, kind: S) -> Self {
         self.kind = Some(kind.into());
         self
@@ -126,7 +131,8 @@ impl UpdateFieldBody {
         self
     }
 
-    /// Set the validation regular expression.
+    /// Set the validation regular expression. Pass a delimited regex literal
+    /// (e.g. `"/^[A-Z]{3}$/"`); a bare pattern is rejected with a 400.
     pub fn regex<S: Into<String>>(mut self, regex: S) -> Self {
         self.regex = Some(Some(regex.into()));
         self
@@ -138,7 +144,7 @@ impl UpdateFieldBody {
         self
     }
 
-    /// Set the required flag.
+    /// Set the live-verified legacy sandbox required flag.
     pub fn required(mut self, required: bool) -> Self {
         self.is_required = Some(required);
         self
@@ -276,8 +282,7 @@ impl<'a> FieldsApi<'a> {
     /// {
     ///   "type": "text",
     ///   "name": "Full name",
-    ///   "is_required": false,
-    ///   "is_active": true
+    ///   "is_required": false
     /// }
     /// ```
     ///
@@ -288,7 +293,7 @@ impl<'a> FieldsApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
-    ///     "resource": "field_definition",
+    ///     "resource": "field",
     ///     "id": "103b03a56d52a4bea540f9af20a8",
     ///     "name": "Full name",
     ///     "type": "text",
@@ -332,7 +337,7 @@ impl<'a> FieldsApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
-    ///     "resource": "field_definition",
+    ///     "resource": "field",
     ///     "id": "103b03a56d52a4bea540f9af20a8",
     ///     "name": "AuditField",
     ///     "type": "text",
@@ -373,7 +378,7 @@ impl<'a> FieldsApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
-    ///     "resource": "field_definition",
+    ///     "resource": "field",
     ///     "id": "103b03a56d52a4bea540f9af20a8",
     ///     "name": "Full name (updated)",
     ///     "type": "text",
@@ -476,7 +481,7 @@ impl<'a> FieldsApi<'a> {
     ///   },
     ///   {
     ///     "field_id": "102d25a48c0e2d4e79477d673896",
-    ///     "value": "signer@example.com"
+    ///     "value": "user@example.invalid"
     ///   }
     /// ]
     /// ```

@@ -1,6 +1,6 @@
 [package]
 name = "assinafy"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 rust-version = "1.86"
 description = "Idiomatic async Rust SDK for the Assinafy electronic signature API (https://api.assinafy.com.br/v1)."
@@ -14,51 +14,37 @@ categories = ["api-bindings", "web-programming::http-client"]
 
 [features]
 default = ["rustls-tls"]
-# Use rustls for TLS (pure-Rust, recommended).
+# Use rustls-based TLS without relying on the operating system's TLS stack.
 rustls-tls = ["reqwest/rustls"]
 # Use the OS-native TLS stack instead of rustls.
 native-tls = ["reqwest/native-tls"]
 
 [dependencies]
 bytes = "1"
+# `default-features = false` only to opt out of reqwest's `default-tls`, which
+# this crate's own rustls-tls/native-tls features select instead. The rest of
+# reqwest's defaults (http2, system-proxy, charset) are re-enabled explicitly —
+# without `system-proxy` the client silently ignores HTTP(S)_PROXY/NO_PROXY, and
+# without `http2` it is HTTP/1.1-only.
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "multipart",
     "query",
     "gzip",
+    "http2",
+    "system-proxy",
+    "charset",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs"] }
+tokio = { version = "1", features = ["fs"] }
 url = "2"
 
 [dev-dependencies]
 dotenvy = "0.15"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "time"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 uuid = { version = "1", features = ["v4"] }
-
-[[example]]
-name = "list_signers"
-path = "examples/list_signers.rs"
-
-[[example]]
-name = "create_signer"
-path = "examples/create_signer.rs"
-
-[[example]]
-name = "upload_document"
-path = "examples/upload_document.rs"
-
-[[example]]
-name = "create_assignment"
-path = "examples/create_assignment.rs"
-
-[[example]]
-name = "tags_workflow"
-path = "examples/tags_workflow.rs"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]

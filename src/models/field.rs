@@ -16,7 +16,8 @@ pub struct FieldDefinition {
     /// Field type, such as `text`, `email`, `signature`, or `initial`.
     #[serde(rename = "type")]
     pub kind: String,
-    /// Optional validation regular expression.
+    /// Optional validation regular expression, stored as a delimited regex
+    /// literal (e.g. `"/^[A-Z]{3}$/"`).
     #[serde(default)]
     pub regex: Option<String>,
     /// Whether this field is predefined by the platform.

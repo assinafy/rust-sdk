@@ -8,6 +8,16 @@ use crate::http::HttpClient;
 use crate::models::Tag;
 use crate::pagination::Page;
 
+#[derive(Deserialize)]
+struct DeleteTagResult {
+    deleted: bool,
+}
+
+#[derive(Deserialize)]
+struct DetachTagResult {
+    detached: bool,
+}
+
 /// Body for `POST /accounts/{account_id}/tags`.
 ///
 /// # Request payload
@@ -95,6 +105,9 @@ impl UpdateTagBody {
 }
 
 /// Builder for `GET /accounts/{account_id}/tags`.
+///
+/// Production documents only the `search` filter and returns a flat array.
+/// Pagination and sorting remain available for live legacy deployments.
 #[derive(Debug)]
 pub struct ListTagsRequest<'a> {
     http: &'a HttpClient,
@@ -106,13 +119,13 @@ pub struct ListTagsRequest<'a> {
 }
 
 impl<'a> ListTagsRequest<'a> {
-    /// 1-based page number.
+    /// Legacy 1-based page number.
     pub fn page(mut self, page: u32) -> Self {
         self.page = Some(page);
         self
     }
 
-    /// Results per page.
+    /// Legacy results-per-page control.
     pub fn per_page(mut self, per_page: u32) -> Self {
         self.per_page = Some(per_page);
         self
@@ -124,7 +137,7 @@ impl<'a> ListTagsRequest<'a> {
         self
     }
 
-    /// Sort expression.
+    /// Legacy sort expression.
     pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
         self.sort = Some(sort.into());
         self
@@ -275,10 +288,12 @@ impl<'a> TagsApi<'a> {
     /// {
     ///   "status": 200,
     ///   "message": "",
-    ///   "data": []
+    ///   "data": {
+    ///     "deleted": true
+    ///   }
     /// }
     /// ```
-    pub async fn delete<S: AsRef<str>>(&self, tag_id: S) -> Result<()> {
+    pub async fn delete<S: AsRef<str>>(&self, tag_id: S) -> Result<bool> {
         self.delete_with_force(tag_id, false).await
     }
 
@@ -292,16 +307,19 @@ impl<'a> TagsApi<'a> {
     /// {
     ///   "status": 200,
     ///   "message": "",
-    ///   "data": []
+    ///   "data": {
+    ///     "deleted": true
+    ///   }
     /// }
     /// ```
-    pub async fn delete_with_force<S: AsRef<str>>(&self, tag_id: S, force: bool) -> Result<()> {
+    pub async fn delete_with_force<S: AsRef<str>>(&self, tag_id: S, force: bool) -> Result<bool> {
         let path = format!("accounts/{}/tags/{}", self.account_id, tag_id.as_ref());
         let mut req = self.http.request(Method::DELETE, &path)?;
         if force {
             req = req.query(&[("force", true)]);
         }
-        self.http.send_no_content(req).await
+        let result: DeleteTagResult = self.http.send_envelope(req).await?;
+        Ok(result.deleted)
     }
 
     /// List tags currently attached to a document.
@@ -335,15 +353,23 @@ impl<'a> TagsApi<'a> {
         self.http.send_envelope(req).await
     }
 
-    /// Append tag names to a document (idempotent on existing tags).
+    /// Append tags to a document by **name** (idempotent on existing tags).
     ///
     /// `POST /accounts/{account_id}/documents/{document_id}/tags`.
+    ///
+    /// Despite the OpenAPI spec's field description ("Tag IDs."), the live
+    /// API upserts each entry in `tags` by **name** (case-insensitive match
+    /// against the account's existing tags), auto-creating a new tag if no
+    /// match is found — it does not look entries up by id. Passing a real
+    /// tag id here creates a junk tag whose name is that literal id string.
+    /// [`TagsApi::remove_from_document`] is the only one of these four
+    /// document-tag operations that takes a real tag id.
     ///
     /// # Request payload
     ///
     /// ```json
     /// {
-    ///   "tags": ["103b03a53c0b5c0ddd885c0391c8"]
+    ///   "tags": ["Contracts", "Urgent"]
     /// }
     /// ```
     ///
@@ -373,28 +399,22 @@ impl<'a> TagsApi<'a> {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let tags: Vec<String> = tags.into_iter().map(Into::into).collect();
-        let path = format!(
-            "accounts/{}/documents/{}/tags",
-            self.account_id,
-            document_id.as_ref()
-        );
-        let req = self
-            .http
-            .request(Method::POST, &path)?
-            .json(&serde_json::json!({ "tags": tags }));
-        self.http.send_envelope(req).await
+        self.write_document_tags(Method::POST, document_id, tags)
+            .await
     }
 
-    /// Replace the full set of tag names on a document.
+    /// Replace the full set of tags on a document, addressed by **name**.
     ///
     /// `PUT /accounts/{account_id}/documents/{document_id}/tags`.
+    ///
+    /// Same name-upsert contract as [`TagsApi::add_to_document`] — see that
+    /// method's doc comment for details.
     ///
     /// # Request payload
     ///
     /// ```json
     /// {
-    ///   "tags": ["103b03a53c0b5c0ddd885c0391c8"]
+    ///   "tags": ["Contracts", "Urgent"]
     /// }
     /// ```
     ///
@@ -424,6 +444,22 @@ impl<'a> TagsApi<'a> {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        self.write_document_tags(Method::PUT, document_id, tags)
+            .await
+    }
+
+    /// Shared body for [`TagsApi::add_to_document`] / [`TagsApi::set_on_document`],
+    /// which differ only in HTTP method (`POST` appends, `PUT` replaces).
+    async fn write_document_tags<D: AsRef<str>, I, S>(
+        &self,
+        method: Method,
+        document_id: D,
+        tags: I,
+    ) -> Result<Vec<Tag>>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         let tags: Vec<String> = tags.into_iter().map(Into::into).collect();
         let path = format!(
             "accounts/{}/documents/{}/tags",
@@ -432,7 +468,7 @@ impl<'a> TagsApi<'a> {
         );
         let req = self
             .http
-            .request(Method::PUT, &path)?
+            .request(method, &path)?
             .json(&serde_json::json!({ "tags": tags }));
         self.http.send_envelope(req).await
     }
@@ -456,7 +492,7 @@ impl<'a> TagsApi<'a> {
         &self,
         document_id: D,
         tag_id: T,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let path = format!(
             "accounts/{}/documents/{}/tags/{}",
             self.account_id,
@@ -464,6 +500,7 @@ impl<'a> TagsApi<'a> {
             tag_id.as_ref()
         );
         let req = self.http.request(Method::DELETE, &path)?;
-        self.http.send_no_content(req).await
+        let result: DetachTagResult = self.http.send_envelope(req).await?;
+        Ok(result.detached)
     }
 }

@@ -4,15 +4,18 @@
 //!
 //! ```bash
 //! ASSINAFY_API_KEY=<sandbox key> ASSINAFY_ACCOUNT_ID=<sandbox account> \
+//! ASSINAFY_TEST_EMAIL_PRIMARY=<test inbox> \
+//! ASSINAFY_TEST_EMAIL_SECONDARY=<test inbox> \
 //!   cargo test --test sandbox -- --ignored --test-threads=1
 //! ```
 
 mod common;
 
+use assinafy::models::{AssignmentMethod, NotificationMethod, VerificationMethod};
 use assinafy::resources::{
-    CreateFieldBody, CreateSignerBody, CreateTagBody, CreateTemplateRequest,
-    SearchDocumentsRequest, UpdateFieldBody, UpdateSignerBody, UpdateTagBody,
-    UploadDocumentRequest,
+    CreateAssignmentSigner, CreateFieldBody, CreateSignerBody, CreateTagBody,
+    CreateTemplateRequest, EstimateAssignmentCostBody, LegacySendTokenBody, SearchDocumentsRequest,
+    UpdateFieldBody, UpdateSignerBody, UpdateTagBody, UploadDocumentRequest,
 };
 use uuid::Uuid;
 
@@ -22,6 +25,15 @@ fn unique<S: AsRef<str>>(prefix: S) -> String {
         prefix.as_ref(),
         Uuid::new_v4().simple().to_string().split_at(8).0
     )
+}
+
+fn unique_email(variable: &str, fallback: &str) -> String {
+    let address = std::env::var(variable).unwrap_or_else(|_| fallback.to_owned());
+    let (local, domain) = address
+        .rsplit_once('@')
+        .filter(|(local, domain)| !local.is_empty() && !domain.is_empty())
+        .unwrap_or_else(|| panic!("{variable} must contain a valid test email address"));
+    format!("{local}+{}@{domain}", unique("rust-sdk"))
 }
 
 #[tokio::test]
@@ -55,19 +67,22 @@ async fn signers_full_lifecycle() {
     let signers = client.signers(&account_id);
 
     let full_name = unique("Rust SDK Signer");
-    let email = format!("bill+{}@febacapital.com", unique("rust-sdk"));
+    let email = unique_email("ASSINAFY_TEST_EMAIL_PRIMARY", "user@example.invalid");
     let created = signers
         .create(&CreateSignerBody::new(&full_name).email(&email))
         .await
         .expect("create signer");
     assert_eq!(created.full_name, full_name);
-    assert_eq!(created.email.as_deref(), Some(email.as_str()));
+    assert!(
+        created.email.as_deref() == Some(email.as_str()),
+        "created signer email did not match the request"
+    );
 
     let fetched = signers.get(&created.id).await.expect("get signer");
     assert_eq!(fetched.id, created.id);
 
     let new_name = format!("{full_name} (updated)");
-    let updated_email = format!("billm+{}@billm.org", unique("rust-sdk"));
+    let updated_email = unique_email("ASSINAFY_TEST_EMAIL_SECONDARY", "user@example.invalid");
     let updated = signers
         .update(
             &created.id,
@@ -78,7 +93,10 @@ async fn signers_full_lifecycle() {
         .await
         .expect("update signer");
     assert_eq!(updated.full_name, new_name);
-    assert_eq!(updated.email.as_deref(), Some(updated_email.as_str()));
+    assert!(
+        updated.email.as_deref() == Some(updated_email.as_str()),
+        "updated signer email did not match the request"
+    );
 
     let page = signers
         .list()
@@ -117,7 +135,7 @@ async fn tags_full_lifecycle() {
     let page = tags.list().search(&name).send().await.expect("list tags");
     assert!(page.data.iter().any(|t| t.id == created.id));
 
-    tags.delete(&created.id).await.expect("delete tag");
+    assert!(tags.delete(&created.id).await.expect("delete tag"));
 }
 
 #[tokio::test]
@@ -273,9 +291,6 @@ async fn missing_signer_returns_404_api_error() {
 #[tokio::test]
 #[ignore = "hits live sandbox"]
 async fn upload_document_then_delete() {
-    use assinafy::models::DocumentStatus;
-    use std::time::Duration;
-
     let (client, account_id) = sandbox_or_skip!();
     let pdf = minimal_pdf();
     let upload = assinafy::resources::UploadDocumentRequest::from_bytes(
@@ -293,36 +308,7 @@ async fn upload_document_then_delete() {
         "upload response should expose the original artifact url"
     );
 
-    // Poll until the document leaves the non-deletable processing states.
-    let deletable_statuses = client
-        .documents()
-        .statuses()
-        .await
-        .expect("documents/statuses");
-    let is_deletable = |s: &DocumentStatus| {
-        deletable_statuses
-            .iter()
-            .any(|info| info.code == *s && info.deletable)
-    };
-
-    let mut status = doc.status.clone();
-    let mut tries = 0;
-    while !is_deletable(&status) {
-        if tries >= 30 {
-            panic!(
-                "document {} stuck in non-deletable status {} after 30 tries",
-                doc.id, status
-            );
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        status = client
-            .documents()
-            .get(&doc.id)
-            .await
-            .expect("get doc")
-            .status;
-        tries += 1;
-    }
+    wait_until_deletable(&client, &doc.id, &doc.status).await;
 
     client
         .documents()
@@ -422,9 +408,6 @@ async fn assignments_list_requires_account_context() {
 #[tokio::test]
 #[ignore = "hits live sandbox"]
 async fn documents_rename_and_search() {
-    use assinafy::models::DocumentStatus;
-    use std::time::Duration;
-
     let (client, account_id) = sandbox_or_skip!();
     let docs = client.documents();
 
@@ -433,20 +416,7 @@ async fn documents_rename_and_search() {
     let doc = docs.upload(&account_id, upload).await.expect("upload");
 
     // Wait until the document is deletable (metadata ready) before mutating it.
-    let deletable = docs.statuses().await.expect("statuses");
-    let is_deletable = |s: &DocumentStatus| {
-        deletable
-            .iter()
-            .any(|info| info.code == *s && info.deletable)
-    };
-    let mut status = doc.status.clone();
-    let mut tries = 0;
-    while !is_deletable(&status) {
-        assert!(tries < 30, "document stuck in {status}");
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        status = docs.get(&doc.id).await.expect("get doc").status;
-        tries += 1;
-    }
+    wait_until_deletable(&client, &doc.id, &doc.status).await;
 
     let new_name = format!("{}.pdf", unique("rust-renamed"));
     let renamed = docs.rename(&doc.id, &new_name).await.expect("rename");
@@ -496,6 +466,277 @@ async fn templates_create_get_delete() {
         .delete(&created.id)
         .await
         .expect("delete template");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn users_self_returns_profile() {
+    let (client, _account_id) = sandbox_or_skip!();
+    let me = client.users().me().await.expect("users/self");
+    assert!(!me.email.is_empty(), "authenticated user has an email");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn document_tags_attach_by_name_and_detach_by_id() {
+    let (client, account_id) = sandbox_or_skip!();
+    let docs = client.documents();
+    let tags = client.tags(&account_id);
+
+    let upload =
+        UploadDocumentRequest::from_bytes(format!("{}.pdf", unique("rust-doctag")), minimal_pdf());
+    let doc = docs.upload(&account_id, upload).await.expect("upload");
+    wait_until_deletable(&client, &doc.id, &doc.status).await;
+
+    // `add_to_document` upserts by NAME, not by id: the tag comes back named
+    // exactly as requested (a real tag id would create a tag named after it).
+    let name = unique("rust-doctag");
+    let attached = tags
+        .add_to_document(&doc.id, [name.as_str()])
+        .await
+        .expect("add_to_document");
+    let created = attached
+        .iter()
+        .find(|t| t.name == name)
+        .expect("tag named as requested");
+
+    let listed = tags
+        .list_for_document(&doc.id)
+        .await
+        .expect("list_for_document");
+    assert!(listed.iter().any(|t| t.id == created.id));
+
+    // `set_on_document` replaces the whole set.
+    let replacement = unique("rust-doctag-set");
+    let after_set = tags
+        .set_on_document(&doc.id, [replacement.as_str()])
+        .await
+        .expect("set_on_document");
+    assert!(after_set.iter().any(|t| t.name == replacement));
+
+    // Detach takes a real tag id, unlike the two attach calls above.
+    for tag in tags.list_for_document(&doc.id).await.expect("list tags") {
+        assert!(
+            tags.remove_from_document(&doc.id, &tag.id)
+                .await
+                .expect("remove_from_document")
+        );
+    }
+    assert!(
+        tags.list_for_document(&doc.id)
+            .await
+            .expect("list tags")
+            .is_empty()
+    );
+
+    // Both upserts created account-level tags; `set_on_document` only
+    // detached the first one, so delete both to leave no residue.
+    for name in [&name, &replacement] {
+        for tag in tags
+            .list()
+            .search(name)
+            .send()
+            .await
+            .expect("search tags")
+            .data
+        {
+            if &tag.name == name {
+                assert!(tags.delete(&tag.id).await.expect("delete tag"));
+            }
+        }
+    }
+
+    docs.delete(&doc.id).await.expect("delete document");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn download_artifact_returns_raw_bytes_and_redirects_thumbnail() {
+    use assinafy::models::ArtifactName;
+
+    let (client, account_id) = sandbox_or_skip!();
+    let docs = client.documents();
+
+    let upload =
+        UploadDocumentRequest::from_bytes(format!("{}.pdf", unique("rust-dl")), minimal_pdf());
+    let doc = docs.upload(&account_id, upload).await.expect("upload");
+    wait_until_deletable(&client, &doc.id, &doc.status).await;
+
+    let (bytes, content_type) = docs
+        .download_artifact(&doc.id, ArtifactName::Original)
+        .await
+        .expect("download original");
+    assert!(!bytes.is_empty(), "artifact bytes are non-empty");
+    assert!(
+        content_type.contains("pdf"),
+        "unexpected content-type: {content_type}"
+    );
+
+    // `ArtifactName::Thumbnail` is not valid on the `download/{name}` route;
+    // the SDK redirects it to the dedicated `/thumbnail` route instead.
+    let via_artifact = docs
+        .download_artifact(&doc.id, ArtifactName::Thumbnail)
+        .await;
+    let via_thumbnail = docs.download_thumbnail(&doc.id).await;
+    assert_eq!(
+        via_artifact.is_ok(),
+        via_thumbnail.is_ok(),
+        "Thumbnail must behave identically through both entry points"
+    );
+
+    docs.delete(&doc.id).await.expect("delete document");
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
+async fn assignment_lifecycle_covers_estimate_get_resend_and_reset() {
+    let (client, account_id) = sandbox_or_skip!();
+    let docs = client.documents();
+    let signers = client.signers(&account_id);
+    let assignments = client.assignments();
+
+    let email_variable = "ASSINAFY_TEST_EMAIL_PRIMARY";
+    let email = match std::env::var(email_variable) {
+        Ok(address) => {
+            let (local, domain) = address
+                .rsplit_once('@')
+                .filter(|(local, domain)| !local.is_empty() && !domain.is_empty())
+                .unwrap_or_else(|| panic!("{email_variable} must contain a valid test email"));
+            format!("{local}+{}@{domain}", unique("rust-sdk-assignment"))
+        }
+        Err(_) => {
+            eprintln!("skipping: {email_variable} is required for notification tests");
+            return;
+        }
+    };
+
+    let upload = UploadDocumentRequest::from_bytes(
+        format!("{}.pdf", unique("rust-assignment")),
+        minimal_pdf(),
+    );
+    let doc = docs.upload(&account_id, upload).await.expect("upload");
+    wait_until_deletable(&client, &doc.id, &doc.status).await;
+
+    let signer = match signers
+        .create(&CreateSignerBody::new(unique("Rust SDK Assignment Signer")).email(email.as_str()))
+        .await
+    {
+        Ok(signer) => signer,
+        Err(error) => {
+            docs.delete(&doc.id)
+                .await
+                .expect("clean up document after signer creation failure");
+            panic!("create assignment signer: {error}");
+        }
+    };
+
+    let body = EstimateAssignmentCostBody::from_signers(
+        AssignmentMethod::Virtual,
+        [CreateAssignmentSigner::new(&signer.id)
+            .verification_method(VerificationMethod::Email)
+            .notification_methods(vec![NotificationMethod::Email])],
+    )
+    .message("Rust SDK sandbox contract test");
+
+    const EXPIRES_AT: &str = "2099-12-31T23:59:59Z";
+    let workflow: assinafy::Result<_> = async {
+        let estimate = assignments.estimate_cost(&doc.id, &body).await?;
+        let assignment = assignments.create(&doc.id, &body).await?;
+        let fetched_document = docs.get(&doc.id).await?;
+        let reset = assignments
+            .reset_expiration_at(&doc.id, &assignment.id, EXPIRES_AT)
+            .await?;
+        let resend_estimate = assignments
+            .estimate_resend_cost(&doc.id, &assignment.id, &signer.id)
+            .await?;
+        let resend = assignments
+            .resend_to_signer(&doc.id, &assignment.id, &signer.id)
+            .await?;
+        let public_document = client.public().document(&doc.id).await?;
+        #[allow(deprecated)]
+        client
+            .public()
+            .send_token_legacy(&doc.id, &LegacySendTokenBody::email(&email))
+            .await?;
+
+        Ok((
+            estimate,
+            assignment,
+            fetched_document,
+            reset,
+            resend_estimate,
+            resend,
+            public_document,
+        ))
+    }
+    .await;
+
+    // Both cleanup calls run even when an operation above fails.
+    let document_cleanup = docs.delete(&doc.id).await;
+    let signer_cleanup = signers.delete(&signer.id).await;
+    document_cleanup.expect("delete assignment test document");
+    signer_cleanup.expect("delete assignment test signer");
+
+    let (estimate, assignment, fetched, reset, resend_estimate, resend, public) =
+        workflow.expect("assignment workflow");
+    assert_eq!(estimate.documents, 1.0, "one document is consumed");
+    assert!(
+        estimate.document_balance >= 0.0,
+        "document balance is reported"
+    );
+    assert!(assignment.signers.iter().any(|item| item.id == signer.id));
+    assert_eq!(
+        fetched.assignment.as_ref().map(|item| item.id.as_str()),
+        Some(assignment.id.as_str())
+    );
+    assert_eq!(reset.id, assignment.id);
+    assert!(reset.expires_at.is_some(), "reset expiration is returned");
+    assert!(
+        resend_estimate.has_sufficient_resources || resend_estimate.has_sufficient_credits,
+        "resend estimate reports sufficient resources"
+    );
+    assert!(resend.is_sent, "resend notification was sent");
+    assert_eq!(resend.document_id.as_deref(), Some(doc.id.as_str()));
+    assert_eq!(resend.signer_id.as_deref(), Some(signer.id.as_str()));
+    assert_eq!(public.id, doc.id);
+}
+
+/// Poll a freshly uploaded document until it reaches a deletable status.
+async fn wait_until_deletable(
+    client: &assinafy::Client,
+    document_id: &str,
+    initial: &assinafy::models::DocumentStatus,
+) {
+    use assinafy::models::DocumentStatus;
+    use std::time::Duration;
+
+    let statuses = client
+        .documents()
+        .statuses()
+        .await
+        .expect("documents/statuses");
+    let is_deletable = |s: &DocumentStatus| {
+        statuses
+            .iter()
+            .any(|info| info.code == *s && info.deletable)
+    };
+
+    let mut status = initial.clone();
+    let mut tries = 0;
+    while !is_deletable(&status) {
+        assert!(
+            tries < 30,
+            "document {document_id} stuck in non-deletable status {status}"
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        status = client
+            .documents()
+            .get(document_id)
+            .await
+            .expect("get doc")
+            .status;
+        tries += 1;
+    }
 }
 
 /// A 1-page valid PDF used to exercise the upload endpoint without bundling a

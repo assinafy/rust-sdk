@@ -8,6 +8,9 @@ use crate::models::Activity;
 use crate::pagination::Page;
 
 /// Builder for `GET /documents/{documentId}/activities`.
+///
+/// The production contract has no pagination parameters. The optional page and
+/// sort controls are retained for older deployments that support them.
 #[derive(Debug, Clone)]
 pub struct ListActivitiesRequest<'a> {
     http: &'a HttpClient,
@@ -18,19 +21,19 @@ pub struct ListActivitiesRequest<'a> {
 }
 
 impl<'a> ListActivitiesRequest<'a> {
-    /// 1-based page number.
+    /// Legacy 1-based page number.
     pub fn page(mut self, page: u32) -> Self {
         self.page = Some(page);
         self
     }
 
-    /// Results per page.
+    /// Legacy results-per-page control.
     pub fn per_page(mut self, per_page: u32) -> Self {
         self.per_page = Some(per_page);
         self
     }
 
-    /// Sort expression (e.g. `"-created_at"`).
+    /// Legacy sort expression (e.g. `"-created_at"`).
     pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
         self.sort = Some(sort.into());
         self
@@ -51,7 +54,7 @@ impl<'a> ListActivitiesRequest<'a> {
     ///       "id": 15442,
     ///       "event": "document_metadata_ready",
     ///       "message": "Documento processado.",
-    ///       "payload": [],
+    ///       "payload": {},
     ///       "origin": null,
     ///       "created_at": "2026-07-20T16:30:23Z"
     ///     },
@@ -59,7 +62,7 @@ impl<'a> ListActivitiesRequest<'a> {
     ///       "id": 15441,
     ///       "event": "document_uploaded",
     ///       "message": "Documento criado.",
-    ///       "payload": [],
+    ///       "payload": null,
     ///       "origin": { "ip": "203.0.113.10", "user-agent": "curl/8.7.1" },
     ///       "created_at": "2026-07-20T16:30:21Z"
     ///     }
@@ -67,7 +70,9 @@ impl<'a> ListActivitiesRequest<'a> {
     /// }
     /// ```
     ///
-    /// Pagination totals are returned in `X-Pagination-*` response headers.
+    /// The current production response is a flat array. The SDK wraps it in a
+    /// [`Page`] so older deployments can retain any pagination headers they
+    /// return; production responses have empty pagination metadata.
     pub async fn send(self) -> Result<Page<Activity>> {
         let path = format!("documents/{}/activities", self.document_id);
         let mut req = self.http.request(Method::GET, &path)?;
