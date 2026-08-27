@@ -1,4 +1,8 @@
 //! Demonstrates the full tag lifecycle: create, list, update, delete.
+//!
+//! ```bash
+//! ASSINAFY_API_KEY=... ASSINAFY_ACCOUNT_ID=... cargo run --example tags_workflow
+//! ```
 
 use assinafy::Client;
 use assinafy::resources::{CreateTagBody, UpdateTagBody};
@@ -17,15 +21,19 @@ async fn main() -> assinafy::Result<()> {
         .await?;
     println!("created tag {} ({})", created.name, created.id);
 
-    let updated = tags
-        .update(&created.id, &UpdateTagBody::new().color("ff9900"))
-        .await?;
+    let workflow: assinafy::Result<_> = async {
+        let updated = tags
+            .update(&created.id, &UpdateTagBody::new().color("ff9900"))
+            .await?;
+        let page = tags.list().search(&unique).send().await?;
+        Ok((updated, page))
+    }
+    .await;
+    let cleanup = tags.delete(&created.id).await;
+    let (updated, page) = workflow?;
+    cleanup?;
     println!("updated color to {:?}", updated.color);
-
-    let page = tags.list().search(&unique).send().await?;
     println!("search returned {} tag(s)", page.data.len());
-
-    tags.delete(&created.id).await?;
     println!("deleted tag {}", created.id);
 
     Ok(())

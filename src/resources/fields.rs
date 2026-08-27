@@ -27,16 +27,14 @@ pub struct CreateFieldBody {
     /// Human-readable field name.
     pub name: String,
     /// Optional validation regular expression. Must be a delimited regex
-    /// literal (leading/trailing `/`, e.g. `"/^.{2,}$/"`) — a bare pattern
-    /// like `"^.{2,}$"` is live-verified to be rejected with a 400
-    /// ("Padrão RegEx inválido.").
+    /// literal (leading/trailing `/`, e.g. `"/^.{2,}$/"`). A bare pattern such
+    /// as `"^.{2,}$"` is rejected with `400 Bad Request`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub regex: Option<String>,
     /// Whether this field is required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_required: Option<bool>,
-    /// Legacy sandbox extension controlling whether this field is active.
-    /// The current production create schema does not declare this field.
+    /// Compatibility field controlling whether this field is active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
 }
@@ -70,7 +68,7 @@ impl CreateFieldBody {
         self
     }
 
-    /// Set the legacy sandbox `is_active` create field.
+    /// Set the compatibility `is_active` create field.
     pub fn active(mut self, active: bool) -> Self {
         self.is_active = Some(active);
         self
@@ -93,7 +91,7 @@ impl CreateFieldBody {
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateFieldBody {
-    /// Legacy sandbox extension for changing the field type.
+    /// Compatibility field for changing the field type.
     #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
     pub kind: Option<String>,
     /// New field name.
@@ -104,8 +102,7 @@ pub struct UpdateFieldBody {
     /// [`CreateFieldBody::regex`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub regex: Option<Option<String>>,
-    /// Legacy sandbox extension for changing the required flag. This behavior
-    /// is live-verified even though it is absent from the production schema.
+    /// Compatibility field for changing the required flag.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_required: Option<bool>,
     /// New active flag.
@@ -119,7 +116,7 @@ impl UpdateFieldBody {
         Self::default()
     }
 
-    /// Set the legacy sandbox field type.
+    /// Set the compatibility field type.
     pub fn kind<S: Into<String>>(mut self, kind: S) -> Self {
         self.kind = Some(kind.into());
         self
@@ -144,7 +141,7 @@ impl UpdateFieldBody {
         self
     }
 
-    /// Set the live-verified legacy sandbox required flag.
+    /// Set the compatibility required flag.
     pub fn required(mut self, required: bool) -> Self {
         self.is_required = Some(required);
         self
@@ -244,7 +241,7 @@ impl<'a> ListFieldsRequest<'a> {
     /// }
     /// ```
     pub async fn send(self) -> Result<Vec<FieldDefinition>> {
-        let path = format!("accounts/{}/fields", self.account_id);
+        let path = self.http.path(&["accounts", self.account_id, "fields"])?;
         let mut req = self.http.request(Method::GET, &path)?;
         let mut q: Vec<(&str, String)> = Vec::new();
         if let Some(v) = self.include_inactive {
@@ -308,7 +305,9 @@ impl<'a> FieldsApi<'a> {
     /// }
     /// ```
     pub async fn create(&self, body: &CreateFieldBody) -> Result<FieldDefinition> {
-        let path = format!("accounts/{}/fields", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "fields"])?;
         let req = self.http.request(Method::POST, &path)?.json(body);
         self.http.send_envelope(req).await
     }
@@ -339,7 +338,7 @@ impl<'a> FieldsApi<'a> {
     ///   "data": {
     ///     "resource": "field",
     ///     "id": "103b03a56d52a4bea540f9af20a8",
-    ///     "name": "AuditField",
+    ///     "name": "Example Field",
     ///     "type": "text",
     ///     "regex": null,
     ///     "is_pre_defined": false,
@@ -352,7 +351,12 @@ impl<'a> FieldsApi<'a> {
     /// }
     /// ```
     pub async fn get<S: AsRef<str>>(&self, field_id: S) -> Result<FieldDefinition> {
-        let path = format!("accounts/{}/fields/{}", self.account_id, field_id.as_ref());
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "fields",
+            field_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -397,7 +401,12 @@ impl<'a> FieldsApi<'a> {
         field_id: S,
         body: &UpdateFieldBody,
     ) -> Result<FieldDefinition> {
-        let path = format!("accounts/{}/fields/{}", self.account_id, field_id.as_ref());
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "fields",
+            field_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::PUT, &path)?.json(body);
         self.http.send_envelope(req).await
     }
@@ -416,7 +425,12 @@ impl<'a> FieldsApi<'a> {
     /// }
     /// ```
     pub async fn delete<S: AsRef<str>>(&self, field_id: S) -> Result<()> {
-        let path = format!("accounts/{}/fields/{}", self.account_id, field_id.as_ref());
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "fields",
+            field_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::DELETE, &path)?;
         self.http.send_no_content(req).await
     }
@@ -455,11 +469,13 @@ impl<'a> FieldsApi<'a> {
         field_id: S,
         value: impl Into<serde_json::Value>,
     ) -> Result<FieldValidationResult> {
-        let path = format!(
-            "accounts/{}/fields/{}/validate",
-            self.account_id,
-            field_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "fields",
+            field_id.as_ref(),
+            "validate",
+        ])?;
         let req = self
             .http
             .request(Method::POST, &path)?
@@ -511,7 +527,12 @@ impl<'a> FieldsApi<'a> {
         I: IntoIterator<Item = ValidateFieldEntry>,
     {
         let entries: Vec<ValidateFieldEntry> = entries.into_iter().collect();
-        let path = format!("accounts/{}/fields/validate-multiple", self.account_id);
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "fields",
+            "validate-multiple",
+        ])?;
         let req = self.http.request(Method::POST, &path)?.json(&entries);
         self.http.send_envelope(req).await
     }

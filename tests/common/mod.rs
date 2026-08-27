@@ -4,8 +4,7 @@ use assinafy::Client;
 
 /// Pull required env vars and build a sandbox client.
 ///
-/// Returns `None` if either credential is missing so the test can `return`
-/// gracefully (the wrapping macro converts that into a skipped test).
+/// Returns `None` if either credential is missing.
 pub fn sandbox_client() -> Option<(Client, String)> {
     let _ = dotenvy::dotenv();
     let key = std::env::var("ASSINAFY_API_KEY").ok()?;
@@ -18,16 +17,14 @@ pub fn sandbox_client() -> Option<(Client, String)> {
     Some((client, account))
 }
 
-/// Skip the body of an `#[ignore]` test if the sandbox env vars are missing.
-/// Prints a hint so the runner output is self-explanatory.
+/// Require sandbox credentials when an explicitly ignored live test is run.
 #[macro_export]
 macro_rules! sandbox_or_skip {
     () => {{
         match $crate::common::sandbox_client() {
             Some(x) => x,
             None => {
-                eprintln!("skipping: ASSINAFY_API_KEY / ASSINAFY_ACCOUNT_ID not set");
-                return;
+                panic!("ASSINAFY_API_KEY and ASSINAFY_ACCOUNT_ID are required for live tests");
             }
         }
     }};

@@ -1,6 +1,6 @@
 [package]
 name = "assinafy"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2024"
 rust-version = "1.86"
 description = "Idiomatic async Rust SDK for the Assinafy electronic signature API (https://api.assinafy.com.br/v1)."
@@ -9,6 +9,7 @@ repository = "https://github.com/assinafy/rust-sdk"
 homepage = "https://assinafy.com.br"
 documentation = "https://docs.rs/assinafy"
 readme = "README.md"
+exclude = ["/AUDIT.md"]
 keywords = ["assinafy", "signature", "esign", "api", "sdk"]
 categories = ["api-bindings", "web-programming::http-client"]
 

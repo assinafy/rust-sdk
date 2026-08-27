@@ -30,14 +30,17 @@ fn base_url_custom_normalises_trailing_slash() {
 }
 
 #[test]
-fn base_url_custom_normalises_path_not_query_or_fragment() {
-    let u = BaseUrl::custom("https://example.test/api?tenant=1").unwrap();
-    let joined = u.as_url().join("docs").unwrap();
-    assert_eq!(joined.path(), "/api/docs");
-
-    let u = BaseUrl::custom("https://example.test/api#v2").unwrap();
-    let joined = u.as_url().join("docs").unwrap();
-    assert_eq!(joined.path(), "/api/docs");
+fn base_url_custom_rejects_unsafe_authority_and_suffixes() {
+    for url in [
+        "http://example.test/api",
+        "https://user:password@example.test/api",
+        "https://example.test/api?tenant=1",
+        "https://example.test/api#v2",
+    ] {
+        assert!(BaseUrl::custom(url).is_err(), "accepted unsafe URL {url}");
+    }
+    assert!(BaseUrl::custom("http://127.0.0.1:8080/v1").is_ok());
+    assert!(BaseUrl::custom("http://[::1]:8080/v1").is_ok());
 }
 
 #[test]
@@ -47,6 +50,17 @@ fn base_url_direct_custom_construction_is_also_normalised() {
     let u = BaseUrl::Custom(url::Url::parse("https://example.test/api").unwrap());
     let joined = u.as_url().join("docs").unwrap();
     assert_eq!(joined.path(), "/api/docs");
+}
+
+#[test]
+fn client_builder_revalidates_direct_custom_urls() {
+    let url = url::Url::parse("http://example.test/v1").unwrap();
+    assert!(
+        Client::builder()
+            .base_url(BaseUrl::Custom(url))
+            .build()
+            .is_err()
+    );
 }
 
 #[test]
@@ -162,17 +176,59 @@ fn client_from_api_key_defaults_to_production() {
 }
 
 #[test]
-fn client_builder_accepts_custom_http_client_and_connect_timeout() {
+fn custom_http_clients_are_limited_to_unauthenticated_requests() {
     use std::time::Duration;
-    let custom = reqwest::Client::new();
     let client = Client::builder()
-        .api_key("k")
         .connect_timeout(Duration::from_secs(1))
-        .http_client(custom)
+        .http_client(reqwest::Client::new())
         .build()
         .unwrap();
-    // Builder options besides http_client/connect_timeout still apply.
-    assert!(matches!(client.auth(), Auth::ApiKey(k) if k == "k"));
+    assert!(matches!(client.auth(), Auth::None));
+
+    assert!(
+        Client::builder()
+            .api_key("k")
+            .http_client(reqwest::Client::new())
+            .build()
+            .is_err()
+    );
+}
+
+#[test]
+fn authenticated_custom_http_clients_require_explicit_opt_in() {
+    let transport = reqwest::Client::builder()
+        .referer(false)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let client = Client::builder()
+        .api_key("k")
+        .authenticated_http_client(transport)
+        .build()
+        .unwrap();
+    assert!(matches!(client.auth(), Auth::ApiKey(key) if key == "k"));
+}
+
+#[tokio::test]
+async fn adding_auth_later_cannot_bypass_custom_client_redirect_safety() {
+    let client = Client::builder()
+        .http_client(reqwest::Client::new())
+        .build()
+        .unwrap()
+        .with_auth(Auth::ApiKey("k".into()));
+    assert!(matches!(
+        client.documents().statuses().await,
+        Err(assinafy::Error::Config(_))
+    ));
+}
+
+#[tokio::test]
+async fn resource_ids_cannot_change_the_request_route() {
+    let client = Client::builder().build().unwrap();
+    assert!(matches!(
+        client.account("victim/logo").delete().await,
+        Err(assinafy::Error::Config(_))
+    ));
 }
 
 #[test]
@@ -252,6 +308,12 @@ fn documented_public_send_token_body_shape() {
 
 #[test]
 fn verify_code_body_uses_documented_field_names() {
+    let body = serde_json::to_value(VerifyCodeBody::new("123456")).unwrap();
+    assert_eq!(body, serde_json::json!({ "verification-code": "123456" }));
+}
+
+#[test]
+fn verify_code_body_can_emit_legacy_access_code() {
     let body =
         serde_json::to_value(VerifyCodeBody::new("123456").access_code("signer-code")).unwrap();
     assert_eq!(
@@ -343,11 +405,28 @@ fn auth_request_builders_emit_documented_fields() {
 }
 
 #[test]
-fn signer_confirmation_builder_can_set_all_documented_fields() {
+fn signer_confirmation_builder_emits_documented_fields() {
     let json = serde_json::to_value(
         ConfirmSignerDataBody::new()
             .full_name("Bill Murray")
             .email("user@example.invalid")
+            .government_id("12345678909"),
+    )
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "full_name": "Bill Murray",
+            "email": "user@example.invalid",
+            "government_id": "12345678909"
+        })
+    );
+}
+
+#[test]
+fn signer_confirmation_builder_can_emit_legacy_extensions() {
+    let json = serde_json::to_value(
+        ConfirmSignerDataBody::new()
             .whatsapp("+5548999990000")
             .accepted_terms(true)
             .verification_code("123456"),
@@ -356,8 +435,6 @@ fn signer_confirmation_builder_can_set_all_documented_fields() {
     assert_eq!(
         json,
         serde_json::json!({
-            "full_name": "Bill Murray",
-            "email": "user@example.invalid",
             "whatsapp_phone_number": "+5548999990000",
             "has_accepted_terms": true,
             "code": "123456"

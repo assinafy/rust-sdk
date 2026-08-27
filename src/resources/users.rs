@@ -165,9 +165,9 @@ impl<'a> UsersApi<'a> {
 
     /// Retrieve the authenticated user's profile.
     ///
-    /// `GET /users/self`. Production returns the profile directly. The SDK
-    /// also accepts the sandbox's legacy `{ "user": ..., "accounts": [...] }`
-    /// data shape and consistently returns only the profile.
+    /// `GET /users/self`. The SDK accepts either a direct profile or the
+    /// compatibility [`SelfUser`] data shape and consistently returns only the
+    /// profile.
     ///
     /// # Response payload
     ///
@@ -199,7 +199,8 @@ impl<'a> UsersApi<'a> {
     ///
     /// `GET /users/self/stats`. Monthly queries return the last 12 months,
     /// most recent first. Daily queries return every day in the requested
-    /// month. The API zero-fills both series.
+    /// month. The API zero-fills both series. This endpoint is available on
+    /// production and is not exposed by the sandbox.
     ///
     /// # Request parameters
     ///
@@ -215,8 +216,13 @@ impl<'a> UsersApi<'a> {
     ///   "documents_uploaded": 42,
     ///   "documents_sent": 37,
     ///   "signature_requests": 61,
-    ///   "signature_requests_email": 55,
-    ///   "signature_requests_whatsapp": 18,
+    ///   "signature_requests_notification_email": 55,
+    ///   "signature_requests_notification_whatsapp": 18,
+    ///   "signature_requests_notification_bypass": 3,
+    ///   "signature_requests_verification_email": 48,
+    ///   "signature_requests_verification_whatsapp": 6,
+    ///   "signature_requests_verification_bypass": 3,
+    ///   "signature_requests_verification_digital_certificate": 4,
     ///   "signature_requests_viewed": 44,
     ///   "signature_requests_completed": 52,
     ///   "documents_certified": 30
@@ -233,7 +239,8 @@ impl<'a> UsersApi<'a> {
     /// Retrieve all nine owner-facing document e-mail preferences.
     ///
     /// `GET /users/self/notification-preferences`. All keys are always
-    /// returned; each defaults to `true` until changed.
+    /// returned; each defaults to `true` until changed. This endpoint is
+    /// available on production and is not exposed by the sandbox.
     ///
     /// # Response payload
     ///
@@ -263,6 +270,8 @@ impl<'a> UsersApi<'a> {
     /// current values. An empty update is rejected locally as
     /// [`Error::Config`]; the API likewise rejects empty objects, unknown keys,
     /// and non-boolean values. The full updated preference map is returned.
+    /// This endpoint is available on production and is not exposed by the
+    /// sandbox.
     ///
     /// # Request payload
     ///

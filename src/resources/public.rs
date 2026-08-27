@@ -28,11 +28,11 @@ impl SendTokenBody {
     }
 }
 
-/// Legacy sandbox body for
+/// Compatibility body for
 /// `PUT /public/documents/{document_id}/send-token`.
 ///
-/// Production expects [`SendTokenBody`]'s `{ "email": ... }` payload. Some
-/// older sandbox deployments instead require both the recipient and channel:
+/// Use [`SendTokenBody`] unless the target deployment requires an explicit
+/// recipient and channel:
 ///
 /// ```json
 /// { "recipient": "user@example.invalid", "channel": "email" }
@@ -41,13 +41,13 @@ impl SendTokenBody {
 pub struct LegacySendTokenBody {
     /// Address or phone number that should receive the token.
     pub recipient: String,
-    /// Delivery channel understood by the legacy deployment.
+    /// Delivery channel understood by the compatibility endpoint.
     pub channel: String,
 }
 
 impl LegacySendTokenBody {
-    /// Build a legacy sandbox token request for an explicit channel.
-    #[deprecated(note = "sandbox compatibility only; production uses SendTokenBody")]
+    /// Build a compatibility token request for an explicit channel.
+    #[deprecated(note = "compatibility only; use SendTokenBody")]
     pub fn new<R: Into<String>, C: Into<String>>(recipient: R, channel: C) -> Self {
         Self {
             recipient: recipient.into(),
@@ -55,8 +55,8 @@ impl LegacySendTokenBody {
         }
     }
 
-    /// Build a legacy sandbox email-token request.
-    #[deprecated(note = "sandbox compatibility only; production uses SendTokenBody::email")]
+    /// Build a compatibility email-token request.
+    #[deprecated(note = "compatibility only; use SendTokenBody::email")]
     pub fn email<S: Into<String>>(recipient: S) -> Self {
         Self {
             recipient: recipient.into(),
@@ -131,7 +131,9 @@ impl<'a> PublicApi<'a> {
     /// Older deployments may instead return the reduced legacy fields
     /// `page_count` and `created_by`; [`PublicDocument`] accepts both shapes.
     pub async fn document<S: AsRef<str>>(&self, document_id: S) -> Result<PublicDocument> {
-        let path = format!("public/documents/{}", document_id.as_ref());
+        let path = self
+            .http
+            .path(&["public", "documents", document_id.as_ref()])?;
         let req = self.http.request_public(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -160,11 +162,11 @@ impl<'a> PublicApi<'a> {
         self.send_token_payload(document_id.as_ref(), body).await
     }
 
-    /// Send a signer access token using the legacy sandbox payload.
+    /// Send a signer access token using the compatibility payload.
     ///
     /// `PUT /public/documents/{document_id}/send-token`. This compatibility
-    /// method requires no authentication and sends the older request shape.
-    /// Production callers should use [`Self::send_token`] instead.
+    /// method requires no authentication and sends the recipient/channel
+    /// request shape. Prefer [`Self::send_token`] unless it is required.
     ///
     /// # Request payload
     ///
@@ -177,7 +179,7 @@ impl<'a> PublicApi<'a> {
     /// ```json
     /// { "status": 200, "message": "", "data": [] }
     /// ```
-    #[deprecated(note = "sandbox compatibility only; production uses PublicApi::send_token")]
+    #[deprecated(note = "compatibility only; use PublicApi::send_token")]
     pub async fn send_token_legacy<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -191,7 +193,9 @@ impl<'a> PublicApi<'a> {
         document_id: &str,
         body: &T,
     ) -> Result<()> {
-        let path = format!("public/documents/{document_id}/send-token");
+        let path = self
+            .http
+            .path(&["public", "documents", document_id, "send-token"])?;
         let req = self.http.request_public(Method::PUT, &path)?.json(body);
         self.http.send_no_content(req).await
     }

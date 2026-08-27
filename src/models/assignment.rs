@@ -326,8 +326,7 @@ pub struct Assignment {
     pub resource: Option<String>,
     /// Assignment identifier.
     pub id: String,
-    /// Document identifier. Not present in the spec's `Assignment` schema
-    /// nor in any observed live response; always `None` in practice.
+    /// Compatibility document identifier, when returned by a deployment.
     #[serde(default)]
     pub document_id: Option<String>,
     /// Email of the user that created the assignment.
@@ -336,13 +335,11 @@ pub struct Assignment {
     /// Delivery method.
     #[serde(default)]
     pub method: Option<AssignmentMethod>,
-    /// Assignment status. Not present in the spec's `Assignment` schema nor
-    /// in any observed live response; always `None` in practice.
+    /// Compatibility assignment status, when returned by a deployment.
     #[serde(default)]
     pub status: Option<String>,
-    /// Expiration timestamp using the legacy field name. Not present in the
-    /// spec's `Assignment` schema nor in any observed live response; use
-    /// `expires_at` instead.
+    /// Expiration timestamp using the compatibility field name. Prefer
+    /// [`expires_at`](Self::expires_at).
     #[serde(default)]
     pub expiration: Option<String>,
     /// Expiry timestamp (ISO-8601).
@@ -366,16 +363,14 @@ pub struct Assignment {
     /// Direct signing URLs.
     #[serde(default)]
     pub signing_urls: Vec<SigningUrl>,
-    /// Completion timestamp. Not present in the spec's `Assignment` schema
-    /// nor in any observed live response; always `None` in practice.
+    /// Compatibility completion timestamp, when returned by a deployment.
     #[serde(default)]
     pub completed_at: Option<serde_json::Value>,
-    /// Creation timestamp. Not present in the spec's `Assignment` schema nor
-    /// in any observed live response; always `None` in practice.
+    /// Compatibility creation timestamp, when returned by a deployment.
     #[serde(default)]
     pub created_at: Option<serde_json::Value>,
-    /// Last-modification timestamp. Not present in the spec's `Assignment`
-    /// schema nor in any observed live response; always `None` in practice.
+    /// Compatibility last-modification timestamp, when returned by a
+    /// deployment.
     #[serde(default)]
     pub updated_at: Option<serde_json::Value>,
 }

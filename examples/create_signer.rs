@@ -1,4 +1,8 @@
 //! Create a signer in the configured sandbox account.
+//!
+//! ```bash
+//! ASSINAFY_API_KEY=... ASSINAFY_ACCOUNT_ID=... cargo run --example create_signer
+//! ```
 
 use assinafy::Client;
 use assinafy::resources::CreateSignerBody;

@@ -73,12 +73,12 @@ impl From<UserAccount> for Account {
     }
 }
 
-/// Legacy sandbox data shape accepted by
+/// Compatibility data shape accepted by
 /// [`UsersApi::me`](crate::resources::UsersApi::me).
 ///
-/// Production returns [`UserProfile`] directly. This type remains public for
-/// callers that need to decode the older `{ "user": ..., "accounts": [...] }`
-/// shape; `UsersApi::me` normalizes both shapes to `UserProfile`.
+/// This type remains public for callers that decode the wrapped [`SelfUser`]
+/// shape; `UsersApi::me` normalizes direct and wrapped profiles to
+/// `UserProfile`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SelfUser {

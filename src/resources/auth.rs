@@ -215,7 +215,7 @@ impl<'a> AuthApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
-    ///     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    ///     "access_token": "example-redacted-access-token",
     ///     "user": {
     ///       "id": "acc_1234567890abcdef12345678",
     ///       "name": "Bill Madeira",
@@ -251,7 +251,7 @@ impl<'a> AuthApi<'a> {
     /// # Request payload
     ///
     /// ```json
-    /// { "provider": "google", "token": "ya29.a0Af…", "has_accepted_terms": true }
+    /// { "provider": "google", "token": "example-redacted-provider-token", "has_accepted_terms": true }
     /// ```
     ///
     /// # Response payload
@@ -261,7 +261,7 @@ impl<'a> AuthApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
-    ///     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    ///     "access_token": "example-redacted-access-token",
     ///     "user": {
     ///       "id": "acc_1234567890abcdef12345678",
     ///       "name": "Bill Madeira",
@@ -385,7 +385,7 @@ impl<'a> AuthApi<'a> {
     /// # Request payload
     ///
     /// ```json
-    /// { "provider": "google", "token": "ya29.a0Af…" }
+    /// { "provider": "google", "token": "example-redacted-provider-token" }
     /// ```
     ///
     /// # Response payload
@@ -401,11 +401,12 @@ impl<'a> AuthApi<'a> {
         self.http.send_no_content(req).await
     }
 
-    /// Build the URL that starts the browser-based social-login (OAuth) flow.
+    /// Build the browser URL that starts the social-login (OAuth) compatibility
+    /// flow available in the sandbox.
     ///
     /// Redirect the user's browser to this URL (`GET /auth/authenticate?authclient={provider}`);
     /// the provider then redirects back to `GET /login-callback`. This method
-    /// only constructs the URL — it performs no request.
+    /// only constructs the URL; it performs no request.
     ///
     /// ```
     /// # use assinafy::Client;

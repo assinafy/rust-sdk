@@ -9,8 +9,8 @@ use crate::pagination::Page;
 
 /// Builder for `GET /documents/{documentId}/activities`.
 ///
-/// The production contract has no pagination parameters. The optional page and
-/// sort controls are retained for older deployments that support them.
+/// Optional pagination and sorting controls are compatibility parameters that
+/// deployments may ignore.
 #[derive(Debug, Clone)]
 pub struct ListActivitiesRequest<'a> {
     http: &'a HttpClient,
@@ -21,19 +21,19 @@ pub struct ListActivitiesRequest<'a> {
 }
 
 impl<'a> ListActivitiesRequest<'a> {
-    /// Legacy 1-based page number.
+    /// Compatibility 1-based page number.
     pub fn page(mut self, page: u32) -> Self {
         self.page = Some(page);
         self
     }
 
-    /// Legacy results-per-page control.
+    /// Compatibility results-per-page control.
     pub fn per_page(mut self, per_page: u32) -> Self {
         self.per_page = Some(per_page);
         self
     }
 
-    /// Legacy sort expression (e.g. `"-created_at"`).
+    /// Compatibility sort expression (e.g. `"-created_at"`).
     pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
         self.sort = Some(sort.into());
         self
@@ -70,11 +70,12 @@ impl<'a> ListActivitiesRequest<'a> {
     /// }
     /// ```
     ///
-    /// The current production response is a flat array. The SDK wraps it in a
-    /// [`Page`] so older deployments can retain any pagination headers they
-    /// return; production responses have empty pagination metadata.
+    /// The SDK wraps the response array in [`Page`]. Pagination metadata is
+    /// populated when the deployment returns `X-Pagination-*` headers.
     pub async fn send(self) -> Result<Page<Activity>> {
-        let path = format!("documents/{}/activities", self.document_id);
+        let path = self
+            .http
+            .path(&["documents", self.document_id.as_str(), "activities"])?;
         let mut req = self.http.request(Method::GET, &path)?;
         let mut q: Vec<(&str, String)> = Vec::new();
         if let Some(v) = self.page {

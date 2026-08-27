@@ -36,6 +36,7 @@ pub(crate) struct HttpClient {
     base: Arc<Url>,
     auth: Arc<Auth>,
     user_agent: Arc<String>,
+    restrict_custom_transport_auth: bool,
 }
 
 impl HttpClient {
@@ -44,12 +45,14 @@ impl HttpClient {
         base: BaseUrl,
         auth: Auth,
         user_agent: String,
+        restrict_custom_transport_auth: bool,
     ) -> Self {
         HttpClient {
             inner: client,
             base: Arc::new(base.as_url()),
             auth: Arc::new(auth),
             user_agent: Arc::new(user_agent),
+            restrict_custom_transport_auth,
         }
     }
 
@@ -67,18 +70,63 @@ impl HttpClient {
             base: self.base.clone(),
             auth: Arc::new(auth),
             user_agent: self.user_agent.clone(),
+            restrict_custom_transport_auth: self.restrict_custom_transport_auth,
         }
     }
 
     /// Build a relative URL by joining `path` to the base URL.
     ///
-    /// `path` must not start with `/` (the base URL ends in `/`).
+    /// Reject URL syntax and dot segments so caller-supplied resource IDs
+    /// cannot replace the intended endpoint path, query, or fragment.
     pub(crate) fn url(&self, path: &str) -> Result<Url> {
-        let path = path.trim_start_matches('/');
-        self.base.join(path).map_err(Error::from)
+        let has_unsafe_byte = path.bytes().any(|byte| {
+            !byte.is_ascii_alphanumeric() && !matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~')
+        });
+        let has_dot_segment = path.split('/').any(|segment| matches!(segment, "." | ".."));
+        if path.is_empty()
+            || path.starts_with('/')
+            || path.contains("//")
+            || has_unsafe_byte
+            || has_dot_segment
+        {
+            return Err(Error::Config(
+                "request path contains unsafe URL syntax or path segments".into(),
+            ));
+        }
+        let url = self.base.join(path)?;
+        if !same_origin(&url, &self.base) || !url.path().starts_with(self.base.path()) {
+            return Err(Error::Config(
+                "request path escaped the configured API base URL".into(),
+            ));
+        }
+        Ok(url)
+    }
+
+    /// Build a route from validated static and opaque-ID path segments.
+    pub(crate) fn path(&self, segments: &[&str]) -> Result<String> {
+        let valid = !segments.is_empty()
+            && segments.iter().all(|segment| {
+                !segment.is_empty()
+                    && segment.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~')
+                    })
+                    && !matches!(*segment, "." | "..")
+            });
+        if !valid {
+            return Err(Error::Config(
+                "request path segment is empty, unsafe, or contains reserved URL syntax".into(),
+            ));
+        }
+        Ok(segments.join("/"))
     }
 
     pub(crate) fn request(&self, method: Method, path: &str) -> Result<RequestBuilder> {
+        if self.restrict_custom_transport_auth && !self.auth.is_none() {
+            return Err(Error::Config(
+                "custom HTTP clients cannot be used with credentials because their redirect policy cannot be verified"
+                    .into(),
+            ));
+        }
         Ok(self.auth.apply(self.request_public(method, path)?))
     }
 
@@ -131,9 +179,10 @@ impl HttpClient {
     /// Perform a request and return the raw response body bytes plus the
     /// response headers (e.g. for downloading PDF artifacts). Errors are still
     /// decoded from any JSON envelope the server returns on failure.
-    pub(crate) async fn send_bytes(
+    async fn send_bytes(
         &self,
         req: RequestBuilder,
+        authenticate_same_origin_redirects: bool,
     ) -> Result<(bytes::Bytes, HeaderMap)> {
         let mut res = req.send().await?;
         for _ in 0..10 {
@@ -149,7 +198,7 @@ impl HttpClient {
                 .get(target.clone())
                 .header(ACCEPT, "application/octet-stream")
                 .header(reqwest::header::USER_AGENT, self.user_agent.as_str());
-            if same_origin(&target, &self.base) {
+            if authenticate_same_origin_redirects && same_origin(&target, &self.base) {
                 redirect = self.auth.apply(redirect);
             }
             res = redirect.send().await?;
@@ -171,7 +220,17 @@ impl HttpClient {
         &self,
         req: RequestBuilder,
     ) -> Result<(bytes::Bytes, String)> {
-        let (bytes, headers) = self.send_bytes(req).await?;
+        let (bytes, headers) = self.send_bytes(req, true).await?;
+        Ok((bytes, content_type_of(&headers)))
+    }
+
+    /// Perform an unauthenticated binary request without adding credentials on
+    /// redirects, including redirects back to the configured API origin.
+    pub(crate) async fn send_public_download(
+        &self,
+        req: RequestBuilder,
+    ) -> Result<(bytes::Bytes, String)> {
+        let (bytes, headers) = self.send_bytes(req, false).await?;
         Ok((bytes, content_type_of(&headers)))
     }
 
@@ -352,6 +411,7 @@ mod tests {
                 base.clone(),
                 auth,
                 "assinafy-test".into(),
+                false,
             );
             let request = http
                 .request_public(Method::GET, "public/documents/document-id")
@@ -366,6 +426,71 @@ mod tests {
                     .contains_key(reqwest::header::AUTHORIZATION)
             );
             assert!(request.url().query().is_none());
+        }
+    }
+
+    #[test]
+    fn request_paths_cannot_retarget_the_api_url() {
+        let http = HttpClient::new(
+            reqwest::Client::new(),
+            BaseUrl::custom("https://api.example.invalid/v1").unwrap(),
+            Auth::None,
+            "assinafy-test".into(),
+            false,
+        );
+
+        for path in [
+            "documents/../users/self",
+            "documents/%2e%2e/users/self",
+            "documents/id?access-token=secret",
+            "documents/id#fragment",
+            "documents\\..\\users\\self",
+            "documents/\t../users/self",
+            "documents/\n../users/self",
+            "/users/self",
+            "documents//users/self",
+        ] {
+            assert!(
+                matches!(http.url(path), Err(Error::Config(_))),
+                "accepted unsafe path {path:?}"
+            );
+        }
+        assert_eq!(
+            http.url("accounts/account-id/documents/document-id")
+                .unwrap()
+                .as_str(),
+            "https://api.example.invalid/v1/accounts/account-id/documents/document-id"
+        );
+    }
+
+    #[test]
+    fn resource_path_segments_cannot_change_route_shape() {
+        let http = HttpClient::new(
+            reqwest::Client::new(),
+            BaseUrl::custom("https://api.example.invalid/v1").unwrap(),
+            Auth::None,
+            "assinafy-test".into(),
+            false,
+        );
+
+        assert_eq!(
+            http.path(&["accounts", "account-id.v2~draft", "logo"])
+                .unwrap(),
+            "accounts/account-id.v2~draft/logo"
+        );
+        for account_id in [
+            "",
+            "victim/logo",
+            "..",
+            "victim?force=true",
+            "victim#fragment",
+            "victim%2flogo",
+            "victim account",
+        ] {
+            assert!(
+                matches!(http.path(&["accounts", account_id]), Err(Error::Config(_))),
+                "accepted unsafe account id {account_id:?}"
+            );
         }
     }
 

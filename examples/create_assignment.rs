@@ -27,8 +27,12 @@ async fn main() -> assinafy::Result<()> {
     let assignment = client.assignments().create(&document_id, &body).await?;
 
     println!("assignment {} created", assignment.id);
-    for url in &assignment.signing_urls {
-        println!("  signer {} -> {}", url.signer_id, url.url);
+    println!(
+        "{} private signing links issued",
+        assignment.signing_urls.len()
+    );
+    for signing_url in &assignment.signing_urls {
+        println!("  signer {}", signing_url.signer_id);
     }
     Ok(())
 }

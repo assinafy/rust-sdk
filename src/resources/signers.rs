@@ -180,7 +180,7 @@ impl<'a> ListSignersRequest<'a> {
     /// }
     /// ```
     pub async fn send(self) -> Result<Page<Signer>> {
-        let path = format!("accounts/{}/signers", self.account_id);
+        let path = self.http.path(&["accounts", self.account_id, "signers"])?;
         let mut req = self.http.request(Method::GET, &path)?;
         let mut query: Vec<(&str, String)> = Vec::with_capacity(4);
         if let Some(p) = self.page {
@@ -245,7 +245,9 @@ impl<'a> SignersApi<'a> {
     /// }
     /// ```
     pub async fn create(&self, body: &CreateSignerBody) -> Result<Signer> {
-        let path = format!("accounts/{}/signers", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "signers"])?;
         let req = self.http.request(Method::POST, &path)?.json(body);
         self.http.send_envelope(req).await
     }
@@ -277,7 +279,7 @@ impl<'a> SignersApi<'a> {
     ///   "data": {
     ///     "resource": "signer",
     ///     "id": "19f805d5a8319e0a753d92a9f4f",
-    ///     "full_name": "Audit Signer",
+    ///     "full_name": "Example Signer",
     ///     "email": "user@example.invalid",
     ///     "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false
@@ -285,11 +287,12 @@ impl<'a> SignersApi<'a> {
     /// }
     /// ```
     pub async fn get<S: AsRef<str>>(&self, signer_id: S) -> Result<Signer> {
-        let path = format!(
-            "accounts/{}/signers/{}",
-            self.account_id,
-            signer_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "signers",
+            signer_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -327,11 +330,12 @@ impl<'a> SignersApi<'a> {
         signer_id: S,
         body: &UpdateSignerBody,
     ) -> Result<Signer> {
-        let path = format!(
-            "accounts/{}/signers/{}",
-            self.account_id,
-            signer_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "signers",
+            signer_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::PUT, &path)?.json(body);
         self.http.send_envelope(req).await
     }
@@ -350,11 +354,12 @@ impl<'a> SignersApi<'a> {
     /// }
     /// ```
     pub async fn delete<S: AsRef<str>>(&self, signer_id: S) -> Result<()> {
-        let path = format!(
-            "accounts/{}/signers/{}",
-            self.account_id,
-            signer_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "signers",
+            signer_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::DELETE, &path)?;
         self.http.send_no_content(req).await
     }

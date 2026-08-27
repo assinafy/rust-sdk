@@ -1,7 +1,7 @@
 //! Endpoints that operate on the currently authenticated signer.
 //!
 //! Most routes here require an `Auth::AccessCode` credential
-//! (`?signer-access-code=...`). The signer artifact-download route is the
+//! (`?signer-access-code={code}`). The signer artifact-download route is the
 //! exception: the OpenAPI contract declares it unauthenticated.
 
 use bytes::Bytes;
@@ -57,8 +57,7 @@ impl VerifyCodeBody {
 /// {
 ///   "full_name": "Maria Silva",
 ///   "email": "user@example.invalid",
-///   "government_id": "123.456.789-09",
-///   "has_accepted_terms": true
+///   "government_id": "123.456.789-09"
 /// }
 /// ```
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -76,7 +75,8 @@ pub struct ConfirmSignerDataBody {
     /// Legacy sandbox extension for the WhatsApp phone number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
-    /// Whether the signer accepts the terms as part of confirmation.
+    /// Legacy extension for accepting terms during confirmation. The current
+    /// API exposes [`SignerSelfApi::accept_terms`] separately.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_accepted_terms: Option<bool>,
     /// Legacy sandbox extension for an inline verification code.
@@ -108,19 +108,19 @@ impl ConfirmSignerDataBody {
         self
     }
 
-    /// Set the signer WhatsApp phone number.
+    /// Set the signer WhatsApp phone number for a legacy deployment.
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
         self
     }
 
-    /// Accept or decline terms in this request.
+    /// Accept or decline terms in this request for a legacy deployment.
     pub fn accepted_terms(mut self, accepted: bool) -> Self {
         self.has_accepted_terms = Some(accepted);
         self
     }
 
-    /// Set an inline verification code when required by the API flow.
+    /// Set an inline verification code for a legacy deployment.
     pub fn verification_code<S: Into<String>>(mut self, code: S) -> Self {
         self.code = Some(code.into());
         self
@@ -220,13 +220,13 @@ impl<'a> ListSignerDocumentsRequest<'a> {
         self
     }
 
-    /// Filter by document status.
+    /// Compatibility filter by document status. Deployments may ignore it.
     pub fn status<S: Into<String>>(mut self, status: S) -> Self {
         self.status = Some(status.into());
         self
     }
 
-    /// Filter by assignment method.
+    /// Compatibility filter by assignment method. Deployments may ignore it.
     pub fn method<S: Into<String>>(mut self, method: S) -> Self {
         self.method = Some(method.into());
         self
@@ -262,7 +262,7 @@ impl<'a> ListSignerDocumentsRequest<'a> {
     ///       "template_id": null,
     ///       "name": "contract.pdf",
     ///       "status": "metadata_ready",
-    ///       "artifacts": { "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original" },
+    ///       "artifacts": { "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original" },
     ///       "is_closed": false,
     ///       "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
     ///       "decline_reason": null,
@@ -275,7 +275,9 @@ impl<'a> ListSignerDocumentsRequest<'a> {
     /// }
     /// ```
     pub async fn send(self) -> Result<Page<Document>> {
-        let path = format!("signers/{}/documents", self.signer_id);
+        let path = self
+            .http
+            .path(&["signers", self.signer_id.as_str(), "documents"])?;
         let mut req = self.http.request(Method::GET, &path)?;
         let mut q: Vec<(&str, String)> = Vec::new();
         if let Some(v) = self.page {
@@ -400,9 +402,7 @@ impl<'a> SignerSelfApi<'a> {
     /// {
     ///   "full_name": "Maria Silva",
     ///   "email": "user@example.invalid",
-    ///   "government_id": "123.456.789-09",
-    ///   "whatsapp_phone_number": "+5511998877665",
-    ///   "has_accepted_terms": true
+    ///   "government_id": "123.456.789-09"
     /// }
     /// ```
     ///
@@ -417,8 +417,8 @@ impl<'a> SignerSelfApi<'a> {
     ///     "id": "102d25a4a1b2c3d4e5f60718293a4b5c",
     ///     "full_name": "Maria Silva",
     ///     "email": "user@example.invalid",
-    ///     "whatsapp_phone_number": "+5511998877665",
-    ///     "has_accepted_terms": true
+    ///     "whatsapp_phone_number": null,
+    ///     "has_accepted_terms": false
     ///   }
     /// }
     /// ```
@@ -427,7 +427,9 @@ impl<'a> SignerSelfApi<'a> {
         document_id: S,
         body: &ConfirmSignerDataBody,
     ) -> Result<Signer> {
-        let path = format!("documents/{}/signers/confirm-data", document_id.as_ref());
+        let path =
+            self.http
+                .path(&["documents", document_id.as_ref(), "signers", "confirm-data"])?;
         let req = self.http.request(Method::PUT, &path)?.json(body);
         self.http.send_envelope(req).await
     }
@@ -449,8 +451,8 @@ impl<'a> SignerSelfApi<'a> {
     ///     "name": "contract.pdf",
     ///     "status": "metadata_ready",
     ///     "artifacts": {
-    ///       "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original",
-    ///       "thumbnail": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../thumbnail"
+    ///       "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original",
+    ///       "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail"
     ///     },
     ///     "is_closed": false,
     ///     "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
@@ -579,8 +581,8 @@ impl<'a> SignerSelfApi<'a> {
     ///     "name": "contract.pdf",
     ///     "status": "metadata_ready",
     ///     "artifacts": {
-    ///       "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original",
-    ///       "thumbnail": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../thumbnail"
+    ///       "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original",
+    ///       "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail"
     ///     },
     ///     "is_closed": false,
     ///     "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
@@ -597,7 +599,9 @@ impl<'a> SignerSelfApi<'a> {
     /// }
     /// ```
     pub async fn current_document<S: AsRef<str>>(&self, signer_id: S) -> Result<Document> {
-        let path = format!("signers/{}/document", signer_id.as_ref());
+        let path = self
+            .http
+            .path(&["signers", signer_id.as_ref(), "document"])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -636,7 +640,7 @@ impl<'a> SignerSelfApi<'a> {
     ///       "template_id": null,
     ///       "name": "contract.pdf",
     ///       "status": "metadata_ready",
-    ///       "artifacts": { "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original" },
+    ///       "artifacts": { "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original" },
     ///       "is_closed": false,
     ///       "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
     ///       "decline_reason": null,
@@ -653,7 +657,9 @@ impl<'a> SignerSelfApi<'a> {
         signer_id: S,
         term: T,
     ) -> Result<Page<Document>> {
-        let path = format!("signers/{}/documents/search", signer_id.as_ref());
+        let path = self
+            .http
+            .path(&["signers", signer_id.as_ref(), "documents", "search"])?;
         let req = self
             .http
             .request(Method::GET, &path)?
@@ -746,14 +752,16 @@ impl<'a> SignerSelfApi<'a> {
         artifact: impl Into<ArtifactName>,
     ) -> Result<(Bytes, String)> {
         let artifact: ArtifactName = artifact.into();
-        let path = format!(
-            "signers/{}/documents/{}/download/{}",
+        let path = self.http.path(&[
+            "signers",
             signer_id.as_ref(),
+            "documents",
             document_id.as_ref(),
-            artifact.as_str()
-        );
+            "download",
+            artifact.as_str(),
+        ])?;
         let req = self.http.request_public(Method::GET, &path)?;
-        self.http.send_download(req).await
+        self.http.send_public_download(req).await
     }
 
     /// Upload a signature or initial image.
@@ -833,7 +841,7 @@ impl<'a> SignerSelfApi<'a> {
     /// The response body is the raw image bytes, not a JSON envelope. The
     /// returned tuple carries the bytes and the response `Content-Type`.
     pub async fn download_signature(&self, kind: SignerType) -> Result<(Bytes, String)> {
-        let path = format!("signature/{}", kind.as_str());
+        let path = self.http.path(&["signature", kind.as_str()])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_download(req).await
     }

@@ -39,7 +39,7 @@
 //!
 //! ## Authentication
 //!
-//! The SDK supports the three credential schemes the API accepts:
+//! The SDK supports the four credential schemes the API accepts:
 //!
 //! * [`Auth::ApiKey`] — sent as the `X-Api-Key` header (recommended for
 //!   server-to-server use).

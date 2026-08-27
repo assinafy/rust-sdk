@@ -121,7 +121,8 @@ pub enum ArtifactName {
     Bundle,
     /// Thumbnail image.
     Thumbnail,
-    /// Custom artifact name.
+    /// Custom artifact name using RFC 3986 unreserved characters
+    /// (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, or `~`).
     Other(String),
 }
 

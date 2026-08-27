@@ -379,7 +379,8 @@ impl<'a> ListAssignmentsRequest<'a> {
     ///       "verification_method": "Email", "notification_methods": ["Email"],
     ///       "step": 1, "notified": true } ],
     ///     "summary": { "signer_count": 1, "completed_count": 0, "signers": [] },
-    ///     "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c", "url": "https://…" } ] }
+    ///     "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c",
+    ///       "url": "https://app.example.invalid/sign/103033c950d865a248a11c5cf96c" } ] }
     /// ]}
     /// ```
     pub async fn send(self) -> Result<Page<Assignment>> {
@@ -419,19 +420,8 @@ impl<'a> AssignmentsApi<'a> {
     /// parameter is required by the sandbox API. Production callers should
     /// prefer [`Self::list_current`], which follows the published contract.
     ///
-    /// # Response payload
-    ///
-    /// ```json
-    /// { "status": 200, "message": "", "data": [
-    ///   { "id": "103033c9...", "sender_email": "user@example.invalid", "method": "virtual",
-    ///     "expires_at": null, "message": "Please sign", "copy_receivers": [],
-    ///     "signers": [ { "id": "19e6b9...", "full_name": "Ada", "email": "user@example.invalid",
-    ///       "step": 1, "completed": false, "verification_method": "Email",
-    ///       "notification_methods": ["Email"], "notified": true } ],
-    ///     "summary": { "signer_count": 1, "completed_count": 0, "signers": [ … ] },
-    ///     "signing_urls": [ { "signer_id": "19e6b9...", "url": "https://…" } ] }
-    /// ]}
-    /// ```
+    /// [`ListAssignmentsRequest::send`] documents the response payload and
+    /// pagination headers.
     pub fn list<S: Into<String>>(&self, account_id: S) -> ListAssignmentsRequest<'_> {
         ListAssignmentsRequest {
             http: self.http,
@@ -444,6 +434,8 @@ impl<'a> AssignmentsApi<'a> {
     /// List assignments for the authenticated user's current account.
     ///
     /// `GET /assignments`, with only the documented pagination parameters.
+    /// [`ListAssignmentsRequest::send`] documents the response payload and
+    /// pagination headers.
     pub fn list_current(&self) -> ListAssignmentsRequest<'_> {
         ListAssignmentsRequest {
             http: self.http,
@@ -498,7 +490,9 @@ impl<'a> AssignmentsApi<'a> {
         body: &CreateAssignmentBody,
     ) -> Result<Assignment> {
         validate_create_assignment(body)?;
-        let path = format!("documents/{}/assignments", document_id.as_ref());
+        let path = self
+            .http
+            .path(&["documents", document_id.as_ref(), "assignments"])?;
         let req = self.http.request(Method::POST, &path)?.json(body);
         self.http.send_data(req).await
     }
@@ -532,10 +526,12 @@ impl<'a> AssignmentsApi<'a> {
         document_id: S,
         body: &EstimateAssignmentCostBody,
     ) -> Result<CostEstimate> {
-        let path = format!(
-            "documents/{}/assignments/estimate-cost",
-            document_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "documents",
+            document_id.as_ref(),
+            "assignments",
+            "estimate-cost",
+        ])?;
         let payload = EstimateAssignmentPayload::from(body);
         let req = self.http.request(Method::POST, &path)?.json(&payload);
         self.http.send_envelope(req).await
@@ -544,8 +540,8 @@ impl<'a> AssignmentsApi<'a> {
     /// Extend an assignment's expiration deadline.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignmentId}/reset-expiration`.
-    /// Pass `Some(timestamp)` for the production contract. `None` retains the
-    /// live-verified legacy sandbox behavior of sending `expires_at: null`.
+    /// Pass `Some(timestamp)` to set a deadline. `None` sends
+    /// `expires_at: null` for compatibility with deployments that clear it.
     ///
     /// # Request payload
     ///
@@ -561,7 +557,8 @@ impl<'a> AssignmentsApi<'a> {
     ///   "method": "virtual", "expires_at": "2026-12-31T23:59:59Z",
     ///   "message": "Please sign", "copy_receivers": [], "signers": [], "items": [],
     ///   "summary": { "signer_count": 1, "completed_count": 0, "signers": [] },
-    ///   "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c", "url": "https://…" } ] } }
+    ///   "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c",
+    ///     "url": "https://app.example.invalid/sign/103033c950d865a248a11c5cf96c" } ] } }
     /// ```
     pub async fn reset_expiration<D: AsRef<str>, A: AsRef<str>>(
         &self,
@@ -569,11 +566,13 @@ impl<'a> AssignmentsApi<'a> {
         assignment_id: A,
         new_expires_at: Option<&str>,
     ) -> Result<Assignment> {
-        let path = format!(
-            "documents/{}/assignments/{}/reset-expiration",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
-            assignment_id.as_ref()
-        );
+            "assignments",
+            assignment_id.as_ref(),
+            "reset-expiration",
+        ])?;
         let req = self
             .http
             .request(Method::PUT, &path)?
@@ -584,7 +583,7 @@ impl<'a> AssignmentsApi<'a> {
     /// Extend an assignment using the production API's non-null timestamp.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignmentId}/reset-expiration`
-    /// with `{ "expires_at": "..." }`. Returns the complete [`Assignment`]
+    /// with `{ "expires_at": "2026-12-31T23:59:59Z" }`. Returns the complete [`Assignment`]
     /// payload documented by [`Self::reset_expiration`].
     pub async fn reset_expiration_at<D: AsRef<str>, A: AsRef<str>>(
         &self,
@@ -613,12 +612,15 @@ impl<'a> AssignmentsApi<'a> {
         assignment_id: A,
         signer_id: S,
     ) -> Result<ResendNotificationResult> {
-        let path = format!(
-            "documents/{}/assignments/{}/signers/{}/resend",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
+            "assignments",
             assignment_id.as_ref(),
-            signer_id.as_ref()
-        );
+            "signers",
+            signer_id.as_ref(),
+            "resend",
+        ])?;
         let req = self.http.request(Method::PUT, &path)?;
         self.http.send_envelope(req).await
     }
@@ -643,12 +645,15 @@ impl<'a> AssignmentsApi<'a> {
         assignment_id: A,
         signer_id: S,
     ) -> Result<CostEstimate> {
-        let path = format!(
-            "documents/{}/assignments/{}/signers/{}/estimate-resend-cost",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
+            "assignments",
             assignment_id.as_ref(),
-            signer_id.as_ref()
-        );
+            "signers",
+            signer_id.as_ref(),
+            "estimate-resend-cost",
+        ])?;
         let req = self.http.request(Method::POST, &path)?;
         self.http.send_envelope(req).await
     }
@@ -674,11 +679,13 @@ impl<'a> AssignmentsApi<'a> {
         document_id: D,
         assignment_id: A,
     ) -> Result<Vec<WhatsAppNotification>> {
-        let path = format!(
-            "documents/{}/assignments/{}/whatsapp-notifications",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
-            assignment_id.as_ref()
-        );
+            "assignments",
+            assignment_id.as_ref(),
+            "whatsapp-notifications",
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -714,11 +721,12 @@ impl<'a> AssignmentsApi<'a> {
     where
         I: IntoIterator<Item = SignDocumentItem>,
     {
-        let path = format!(
-            "documents/{}/assignments/{}",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
-            assignment_id.as_ref()
-        );
+            "assignments",
+            assignment_id.as_ref(),
+        ])?;
         let items: Vec<SignDocumentItem> = items.into_iter().collect();
         let req = self.http.request(Method::POST, &path)?.json(&items);
         self.http.send_envelope(req).await
@@ -745,11 +753,13 @@ impl<'a> AssignmentsApi<'a> {
         assignment_id: A,
         reason: R,
     ) -> Result<()> {
-        let path = format!(
-            "documents/{}/assignments/{}/reject",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
-            assignment_id.as_ref()
-        );
+            "assignments",
+            assignment_id.as_ref(),
+            "reject",
+        ])?;
         let req = self
             .http
             .request(Method::PUT, &path)?

@@ -6,9 +6,8 @@
 Async, idiomatic Rust client for the [Assinafy](https://assinafy.com.br)
 electronic-signature API.
 
-The SDK covers every operation in the public REST surface documented at
-<https://api.assinafy.com.br/v1/docs>, while retaining a few verified legacy
-sandbox routes for compatibility:
+The SDK covers the public REST surface documented at
+<https://api.assinafy.com.br/v1/docs>:
 
 | Surface          | Module                              |
 | ---------------- | ----------------------------------- |
@@ -45,41 +44,15 @@ sandbox routes for compatibility:
 
 ## Install
 
-Requires Rust 1.86 or newer.
+Requires Rust 1.86 or newer and uses the Rust 2024 edition. CI tests both the
+declared 1.86 minimum and the current stable Rust release; Rust does not have
+an LTS channel.
 
 ```toml
 [dependencies]
 assinafy = "2"
 tokio    = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
-
-## Upgrading from 1.x
-
-* `models::Artifact` was removed — no endpoint ever returned that shape. Use
-  `Document::artifacts` (a `BTreeMap<String, String>` of name → URL).
-* `AssignmentItem::{field, signer, page}` are now typed (`AssignmentItemField`,
-  `AssignmentItemSigner`, `DocumentPage`) instead of `serde_json::Value`. Drop
-  the manual `serde_json` parsing and read the fields directly.
-* `ApiError` and `PaginationMeta` are now `#[non_exhaustive]`; build them by
-  deserialization rather than struct literals. (Both types have gained fields
-  since 1.0.0 — this makes future additions non-breaking.)
-* `documents().download_artifact(id, ArtifactName::Thumbnail)` now succeeds:
-  it transparently routes to the `/thumbnail` endpoint instead of returning
-  the 404 the `download/{name}` route gives for `thumbnail`.
-* `tags().add_to_document` / `set_on_document` take tag **names**, not IDs —
-  see [Tags](#tags). The behavior is unchanged; only the docs were wrong.
-* `TemplateDocumentSigner::inline` is deprecated: `create_document` requires a
-  signer that already exists. Use `SignersApi::create` then
-  `TemplateDocumentSigner::existing`.
-* `PublicApi::send_token` now follows the production contract (`{ "email":
-  ... }`) and returns `()`. The live sandbox's older `{ recipient, channel }`
-  contract remains available explicitly through `LegacySendTokenBody` and
-  `send_token_legacy`.
-* Password-management methods now return `EmailResult`, `confirm_data` returns
-  the updated `Signer`, assignment signing returns the API's otherwise
-  unspecified JSON object, and tag delete/detach methods return their
-  documented boolean result. Callers that already discard these results with
-  `?;` need no changes.
 
 ## Quick start
 
@@ -111,17 +84,17 @@ for s in &signers.data {
 use assinafy::{Auth, Client};
 
 // Server-to-server via API key (default for most users).
-let c1 = Client::builder().api_key("...").build().unwrap();
+let c1 = Client::builder().api_key("redacted-api-key").build().unwrap();
 
 // User-token flow.
 let c2 = Client::builder()
-    .bearer("eyJhbGciOi...")
+    .bearer("redacted-access-token")
     .build()
     .unwrap();
 
 // Query-parameter access-token flow, when required by an integration.
 let c2_query = Client::builder()
-    .access_token("eyJhbGciOi...")
+    .access_token("redacted-access-token")
     .build()
     .unwrap();
 
@@ -129,7 +102,90 @@ let c2_query = Client::builder()
 let c3 = c1.with_auth(Auth::AccessCode("signer-token".into()));
 ```
 
-## Common flows
+## End-to-end document flow
+
+This flow creates a signer, uploads a PDF, requests a virtual signature,
+checks the resulting document, downloads the certificated PDF when it is
+ready, and optionally removes sandbox fixtures. Signing links grant access to
+the document: send them through a private channel and never log or persist
+them in plaintext.
+
+```rust,no_run
+use assinafy::Client;
+use assinafy::models::{ArtifactName, AssignmentMethod, DocumentStatus};
+use assinafy::resources::{
+    CreateAssignmentBody, CreateSignerBody, UploadDocumentRequest,
+};
+
+# async fn run() -> assinafy::Result<()> {
+let account_id = std::env::var("ASSINAFY_ACCOUNT_ID").unwrap();
+let client = Client::builder()
+    .api_key(std::env::var("ASSINAFY_API_KEY").unwrap())
+    .sandbox() // remove this call for production
+    .build()?;
+
+let signer = client
+    .signers(&account_id)
+    .create(
+        &CreateSignerBody::new("Integration Signer")
+            .email(std::env::var("ASSINAFY_SIGNER_EMAIL").unwrap()),
+    )
+    .await?;
+
+let upload = UploadDocumentRequest::from_path("./contract.pdf").await?;
+let document = client.documents().upload(&account_id, upload).await?;
+
+let request = CreateAssignmentBody::new(
+    AssignmentMethod::Virtual,
+    [&signer.id],
+)
+.message("Please review and sign this contract.");
+let assignment = client.assignments().create(&document.id, &request).await?;
+println!("assignment {} created for signer {}", assignment.id, signer.id);
+
+// Run this status check again after the recipient completes the signing flow.
+let current = client.documents().get(&document.id).await?;
+if matches!(current.status, DocumentStatus::Certificated) {
+    let (pdf, content_type) = client
+        .documents()
+        .download_artifact(&document.id, ArtifactName::Certificated)
+        .await?;
+    assert_eq!(content_type, "application/pdf");
+    tokio::fs::write("./contract-certificated.pdf", pdf).await?;
+}
+
+// Explicit opt-in cleanup for disposable sandbox fixtures.
+if std::env::var_os("ASSINAFY_CLEANUP").is_some() {
+    let _ = client.documents().delete(&document.id).await;
+    let _ = client.signers(&account_id).delete(&signer.id).await;
+}
+# Ok(()) }
+```
+
+The complete runnable examples live in [`examples/`](examples). Each API
+method’s Rustdoc states its HTTP route and shows the request and response wire
+shape.
+
+## Operation index
+
+| Resource | SDK operations |
+| --- | --- |
+| Authentication | `login`, `social_login`, `change_password`, `request_password_reset`, `reset_password`, `link_social_login`, `social_login_url` |
+| Accounts | `list`, `create`, `get`, `update`, `delete`, `delete_forcing`, `theme`, `stats`, `download_logo`, `upload_logo`, `delete_logo` |
+| API keys | `create`, `get`, `delete` |
+| Users | `me`, `stats`, `notification_preferences`, `update_notification_preferences` |
+| Signers | `create`, `list`, `get`, `update`, `delete` |
+| Documents | `statuses`, `list`, `upload`, `search`, `get`, `rename`, `delete`, `download_artifact`, `download_thumbnail`, `download_page`, `verify` |
+| Assignments | `list`, `list_current`, `create`, `estimate_cost`, `reset_expiration`, `reset_expiration_at`, `resend_to_signer`, `estimate_resend_cost`, `whatsapp_notifications`, `sign`, `reject` |
+| Tags | `list`, `create`, `update`, `delete`, `delete_with_force`, `list_for_document`, `add_to_document`, `set_on_document`, `remove_from_document` |
+| Fields | `create`, `list`, `get`, `update`, `delete`, `validate`, `validate_multiple`, `list_types` |
+| Templates | `list`, `get`, `create`, `update`, `delete`, `download_page`, `create_document`, `estimate_cost` |
+| Webhooks | `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch` |
+| Activities | `list` |
+| Public | `document`, `send_token`, `send_token_legacy` |
+| Signer self | `me`, `accept_terms`, `verify`, `confirm_data`, `signable_document`, `signable_document_with_accepted_terms`, `current_document`, `list_documents`, `search_documents`, `sign`, `decline`, `sign_multiple`, `decline_multiple`, `download_document`, `upload_signature`, `upload_signature_with_reuse`, `download_signature` |
+
+## Focused examples
 
 ### Upload a document
 
@@ -169,8 +225,9 @@ client
     .reset_expiration_at("doc_abc", &assignment.id, "2026-12-31T23:59:59Z")
     .await?;
 
-for url in &assignment.signing_urls {
-    println!("signer {} -> {}", url.signer_id, url.url);
+// Signing URLs grant document access: deliver them privately; do not log them.
+for signing_url in &assignment.signing_urls {
+    println!("signing link issued for {}", signing_url.signer_id);
 }
 # Ok(()) }
 ```
@@ -290,7 +347,7 @@ client
         "doc_abc",
         &ConfirmSignerDataBody::new()
             .email("user@example.invalid")
-            .accepted_terms(true),
+            .government_id("12345678909"),
     )
     .await?;
 
@@ -341,6 +398,8 @@ match client.signers("acc_123").get("missing").await {
 Use [`ClientBuilder::sandbox`] to target the public sandbox at
 `https://sandbox.assinafy.com.br/v1`.
 
+[`ClientBuilder::sandbox`]: https://docs.rs/assinafy/latest/assinafy/struct.ClientBuilder.html#method.sandbox
+
 ## Cargo features
 
 * `rustls-tls` *(default)* — TLS via [rustls].
@@ -358,13 +417,13 @@ export ASSINAFY_TEST_EMAIL_SECONDARY=<secondary-test-inbox>
 cargo test --test sandbox -- --ignored --test-threads=1
 ```
 
-The `--ignored` flag is required because these tests hit the live sandbox, and
+The `--ignored` flag is required because these tests call the sandbox API, and
 `--test-threads=1` keeps the shared workspace state consistent. The email
 variables are read only at runtime and are required for notification-delivery
 coverage; they are never compiled into the SDK. The
 [`Sandbox` workflow](.github/workflows/sandbox.yml) runs them on a daily
-schedule and requires all four values as repository secrets. Local test runs
-skip live calls when the API credential or account ID is absent.
+schedule and reads all four secrets from the GitHub `sandbox` environment.
+Explicit ignored-test runs fail immediately when any value is absent.
 
 ## License
 

@@ -1,6 +1,6 @@
 //! Account / workspace models.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Who is shown as the sender of account signature-request notifications.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,7 +20,19 @@ pub enum NotificationSenderType {
 /// and [`secondary_color`](Account::secondary_color). All environment-specific
 /// fields are optional so a single type deserializes either shape.
 ///
-/// # Example payload (`GET /v1/accounts/{accountId}`)
+/// # List payload (`GET /v1/accounts`)
+///
+/// ```json
+/// {
+///   "id": "acc_1234567890abcdef12345678",
+///   "name": "Acme Inc.",
+///   "roles": ["owner"],
+///   "is_delete_allowed": true,
+///   "created_at": "2026-05-12T18:05:11Z"
+/// }
+/// ```
+///
+/// # Account payload (`GET /v1/accounts/{accountId}`)
 ///
 /// ```json
 /// {
@@ -30,8 +42,6 @@ pub enum NotificationSenderType {
 ///   "primary_color": null,
 ///   "secondary_color": null,
 ///   "notification_sender_type": "User",
-///   "roles": ["owner"],
-///   "is_delete_allowed": true,
 ///   "created_at": "2026-05-12T18:05:11Z"
 /// }
 /// ```
@@ -114,14 +124,19 @@ pub struct AccountTheme {
 ///   "documents_uploaded": 42,
 ///   "documents_sent": 37,
 ///   "signature_requests": 61,
-///   "signature_requests_email": 55,
-///   "signature_requests_whatsapp": 18,
+///   "signature_requests_notification_email": 55,
+///   "signature_requests_notification_whatsapp": 18,
+///   "signature_requests_notification_bypass": 3,
+///   "signature_requests_verification_email": 48,
+///   "signature_requests_verification_whatsapp": 6,
+///   "signature_requests_verification_bypass": 3,
+///   "signature_requests_verification_digital_certificate": 4,
 ///   "signature_requests_viewed": 44,
 ///   "signature_requests_completed": 52,
 ///   "documents_certified": 30
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct DocumentStatsRow {
     /// Period represented by this row: `YYYY-MM` or `YYYY-MM-DD`.
@@ -132,9 +147,27 @@ pub struct DocumentStatsRow {
     pub documents_sent: u64,
     /// Total signature requests created during the period.
     pub signature_requests: u64,
-    /// Signature requests sent by e-mail during the period.
+    /// Requests for which e-mail was a notification channel.
+    pub signature_requests_notification_email: u64,
+    /// Requests for which WhatsApp was a notification channel.
+    pub signature_requests_notification_whatsapp: u64,
+    /// Requests sent without a notification (`Bypass`).
+    pub signature_requests_notification_bypass: u64,
+    /// Requests verified by an e-mail token.
+    pub signature_requests_verification_email: u64,
+    /// Requests verified by a WhatsApp token.
+    pub signature_requests_verification_whatsapp: u64,
+    /// Requests signed without token verification (`Bypass`).
+    pub signature_requests_verification_bypass: u64,
+    /// Requests verified with an ICP-Brasil digital certificate.
+    pub signature_requests_verification_digital_certificate: u64,
+    /// Compatibility alias for [`signature_requests_notification_email`](Self::signature_requests_notification_email).
+    #[deprecated(note = "use signature_requests_notification_email")]
+    #[serde(skip_serializing)]
     pub signature_requests_email: u64,
-    /// Signature requests sent through WhatsApp during the period.
+    /// Compatibility alias for [`signature_requests_notification_whatsapp`](Self::signature_requests_notification_whatsapp).
+    #[deprecated(note = "use signature_requests_notification_whatsapp")]
+    #[serde(skip_serializing)]
     pub signature_requests_whatsapp: u64,
     /// Signature requests whose document was first viewed during the period.
     pub signature_requests_viewed: u64,
@@ -142,4 +175,73 @@ pub struct DocumentStatsRow {
     pub signature_requests_completed: u64,
     /// Documents certified during the period.
     pub documents_certified: u64,
+}
+
+#[derive(Deserialize)]
+struct DocumentStatsRowWire {
+    period: String,
+    #[serde(default)]
+    documents_uploaded: u64,
+    #[serde(default)]
+    documents_sent: u64,
+    #[serde(default)]
+    signature_requests: u64,
+    #[serde(default)]
+    signature_requests_notification_email: Option<u64>,
+    #[serde(default)]
+    signature_requests_notification_whatsapp: Option<u64>,
+    #[serde(default)]
+    signature_requests_notification_bypass: u64,
+    #[serde(default)]
+    signature_requests_verification_email: u64,
+    #[serde(default)]
+    signature_requests_verification_whatsapp: u64,
+    #[serde(default)]
+    signature_requests_verification_bypass: u64,
+    #[serde(default)]
+    signature_requests_verification_digital_certificate: u64,
+    #[serde(default)]
+    signature_requests_email: Option<u64>,
+    #[serde(default)]
+    signature_requests_whatsapp: Option<u64>,
+    #[serde(default)]
+    signature_requests_viewed: u64,
+    #[serde(default)]
+    signature_requests_completed: u64,
+    #[serde(default)]
+    documents_certified: u64,
+}
+
+impl<'de> Deserialize<'de> for DocumentStatsRow {
+    #[allow(deprecated)]
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = DocumentStatsRowWire::deserialize(deserializer)?;
+        let notification_email = wire
+            .signature_requests_notification_email
+            .or(wire.signature_requests_email)
+            .unwrap_or_default();
+        let notification_whatsapp = wire
+            .signature_requests_notification_whatsapp
+            .or(wire.signature_requests_whatsapp)
+            .unwrap_or_default();
+        Ok(Self {
+            period: wire.period,
+            documents_uploaded: wire.documents_uploaded,
+            documents_sent: wire.documents_sent,
+            signature_requests: wire.signature_requests,
+            signature_requests_notification_email: notification_email,
+            signature_requests_notification_whatsapp: notification_whatsapp,
+            signature_requests_notification_bypass: wire.signature_requests_notification_bypass,
+            signature_requests_verification_email: wire.signature_requests_verification_email,
+            signature_requests_verification_whatsapp: wire.signature_requests_verification_whatsapp,
+            signature_requests_verification_bypass: wire.signature_requests_verification_bypass,
+            signature_requests_verification_digital_certificate: wire
+                .signature_requests_verification_digital_certificate,
+            signature_requests_email: notification_email,
+            signature_requests_whatsapp: notification_whatsapp,
+            signature_requests_viewed: wire.signature_requests_viewed,
+            signature_requests_completed: wire.signature_requests_completed,
+            documents_certified: wire.documents_certified,
+        })
+    }
 }

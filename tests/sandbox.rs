@@ -14,8 +14,9 @@ mod common;
 use assinafy::models::{AssignmentMethod, NotificationMethod, VerificationMethod};
 use assinafy::resources::{
     CreateAssignmentSigner, CreateFieldBody, CreateSignerBody, CreateTagBody,
-    CreateTemplateRequest, EstimateAssignmentCostBody, LegacySendTokenBody, SearchDocumentsRequest,
-    UpdateFieldBody, UpdateSignerBody, UpdateTagBody, UploadDocumentRequest,
+    CreateTemplateRequest, DocumentStatsQuery, EstimateAssignmentCostBody, LegacySendTokenBody,
+    SearchDocumentsRequest, UpdateFieldBody, UpdateSignerBody, UpdateTagBody,
+    UploadDocumentRequest,
 };
 use uuid::Uuid;
 
@@ -27,8 +28,9 @@ fn unique<S: AsRef<str>>(prefix: S) -> String {
     )
 }
 
-fn unique_email(variable: &str, fallback: &str) -> String {
-    let address = std::env::var(variable).unwrap_or_else(|_| fallback.to_owned());
+fn unique_email(variable: &str) -> String {
+    let address =
+        std::env::var(variable).unwrap_or_else(|_| panic!("{variable} is required for live tests"));
     let (local, domain) = address
         .rsplit_once('@')
         .filter(|(local, domain)| !local.is_empty() && !domain.is_empty())
@@ -67,50 +69,46 @@ async fn signers_full_lifecycle() {
     let signers = client.signers(&account_id);
 
     let full_name = unique("Rust SDK Signer");
-    let email = unique_email("ASSINAFY_TEST_EMAIL_PRIMARY", "user@example.invalid");
+    let email = unique_email("ASSINAFY_TEST_EMAIL_PRIMARY");
     let created = signers
         .create(&CreateSignerBody::new(&full_name).email(&email))
         .await
         .expect("create signer");
-    assert_eq!(created.full_name, full_name);
-    assert!(
-        created.email.as_deref() == Some(email.as_str()),
-        "created signer email did not match the request"
-    );
-
-    let fetched = signers.get(&created.id).await.expect("get signer");
-    assert_eq!(fetched.id, created.id);
 
     let new_name = format!("{full_name} (updated)");
-    let updated_email = unique_email("ASSINAFY_TEST_EMAIL_SECONDARY", "user@example.invalid");
-    let updated = signers
-        .update(
-            &created.id,
-            &UpdateSignerBody::new()
-                .full_name(&new_name)
-                .email(&updated_email),
-        )
-        .await
-        .expect("update signer");
-    assert_eq!(updated.full_name, new_name);
-    assert!(
-        updated.email.as_deref() == Some(updated_email.as_str()),
-        "updated signer email did not match the request"
-    );
+    let updated_email = unique_email("ASSINAFY_TEST_EMAIL_SECONDARY");
+    let workflow: assinafy::Result<_> = async {
+        let fetched = signers.get(&created.id).await?;
+        let updated = signers
+            .update(
+                &created.id,
+                &UpdateSignerBody::new()
+                    .full_name(&new_name)
+                    .email(&updated_email),
+            )
+            .await?;
+        let page = signers
+            .list()
+            .per_page(100)
+            .search(&new_name)
+            .send()
+            .await?;
+        Ok((fetched, updated, page))
+    }
+    .await;
 
-    let page = signers
-        .list()
-        .per_page(100)
-        .search(&new_name)
-        .send()
-        .await
-        .expect("list signers");
+    signers.delete(&created.id).await.expect("delete signer");
+    let (fetched, updated, page) = workflow.expect("signer workflow");
+
+    assert_eq!(created.full_name, full_name);
+    assert_eq!(created.email.as_deref(), Some(email.as_str()));
+    assert_eq!(fetched.id, created.id);
+    assert_eq!(updated.full_name, new_name);
+    assert_eq!(updated.email.as_deref(), Some(updated_email.as_str()));
     assert!(
         page.data.iter().any(|s| s.id == created.id),
         "newly created signer should appear in search results"
     );
-
-    signers.delete(&created.id).await.expect("delete signer");
 }
 
 #[tokio::test]
@@ -124,18 +122,20 @@ async fn tags_full_lifecycle() {
         .create(&CreateTagBody::new(&name).color("3366ff"))
         .await
         .expect("create tag");
-    assert_eq!(created.name, name);
-
-    let updated = tags
-        .update(&created.id, &UpdateTagBody::new().color("ff6633"))
-        .await
-        .expect("update tag");
-    assert_eq!(updated.color.as_deref(), Some("ff6633"));
-
-    let page = tags.list().search(&name).send().await.expect("list tags");
-    assert!(page.data.iter().any(|t| t.id == created.id));
+    let workflow: assinafy::Result<_> = async {
+        let updated = tags
+            .update(&created.id, &UpdateTagBody::new().color("ff6633"))
+            .await?;
+        let page = tags.list().search(&name).send().await?;
+        Ok((updated, page))
+    }
+    .await;
 
     assert!(tags.delete(&created.id).await.expect("delete tag"));
+    let (updated, page) = workflow.expect("tag workflow");
+    assert_eq!(created.name, name);
+    assert_eq!(updated.color.as_deref(), Some("ff6633"));
+    assert!(page.data.iter().any(|tag| tag.id == created.id));
 }
 
 #[tokio::test]
@@ -211,38 +211,32 @@ async fn fields_full_lifecycle() {
         )
         .await
         .expect("create field");
-    assert_eq!(created.name, name);
-    assert_eq!(created.kind, "text");
-
-    let fetched = fields.get(&created.id).await.expect("get field");
-    assert_eq!(fetched.id, created.id);
-
-    let valid = fields
-        .validate(&created.id, "ABC")
-        .await
-        .expect("validate field");
-    assert!(
-        valid.success,
-        "expected ABC to satisfy field regex: {valid:?}"
-    );
-
     let new_name = format!("{name} Updated");
-    let updated = fields
-        .update(
-            &created.id,
-            &UpdateFieldBody::new()
-                .name(&new_name)
-                .clear_regex()
-                .required(false),
-        )
-        .await
-        .expect("update field");
-    assert_eq!(updated.name, new_name);
-
-    let all = fields.list().send().await.expect("list fields");
-    assert!(all.iter().any(|field| field.id == created.id));
+    let workflow: assinafy::Result<_> = async {
+        let fetched = fields.get(&created.id).await?;
+        let valid = fields.validate(&created.id, "ABC").await?;
+        let updated = fields
+            .update(
+                &created.id,
+                &UpdateFieldBody::new()
+                    .name(&new_name)
+                    .clear_regex()
+                    .required(false),
+            )
+            .await?;
+        let all = fields.list().send().await?;
+        Ok((fetched, valid, updated, all))
+    }
+    .await;
 
     fields.delete(&created.id).await.expect("delete field");
+    let (fetched, valid, updated, all) = workflow.expect("field workflow");
+    assert_eq!(created.name, name);
+    assert_eq!(created.kind, "text");
+    assert_eq!(fetched.id, created.id);
+    assert!(valid.success, "expected valid field value: {valid:?}");
+    assert_eq!(updated.name, new_name);
+    assert!(all.iter().any(|field| field.id == created.id));
 }
 
 #[tokio::test]
@@ -302,19 +296,18 @@ async fn upload_document_then_delete() {
         .upload(&account_id, upload)
         .await
         .expect("upload document");
-    assert!(!doc.id.is_empty(), "uploaded doc has id");
-    assert!(
-        doc.artifacts.contains_key("original"),
-        "upload response should expose the original artifact url"
-    );
-
-    wait_until_deletable(&client, &doc.id, &doc.status).await;
-
+    let workflow = wait_until_deletable(&client, &doc.id, &doc.status).await;
     client
         .documents()
         .delete(&doc.id)
         .await
         .expect("delete uploaded document");
+    workflow.expect("wait for uploaded document");
+    assert!(!doc.id.is_empty(), "uploaded doc has id");
+    assert!(
+        doc.artifacts.contains_key("original"),
+        "upload response should expose the original artifact url"
+    );
 }
 
 #[tokio::test]
@@ -415,23 +408,23 @@ async fn documents_rename_and_search() {
         UploadDocumentRequest::from_bytes(format!("{}.pdf", unique("rust-rename")), minimal_pdf());
     let doc = docs.upload(&account_id, upload).await.expect("upload");
 
-    // Wait until the document is deletable (metadata ready) before mutating it.
-    wait_until_deletable(&client, &doc.id, &doc.status).await;
-
     let new_name = format!("{}.pdf", unique("rust-renamed"));
-    let renamed = docs.rename(&doc.id, &new_name).await.expect("rename");
-    assert_eq!(renamed.name, new_name);
-
-    let page = docs
-        .search(
-            &account_id,
-            SearchDocumentsRequest::new("rust-renamed").per_page(5),
-        )
-        .await
-        .expect("search documents");
-    assert!(page.meta.current_page.is_some(), "search is paginated");
-
+    let workflow: assinafy::Result<_> = async {
+        wait_until_deletable(&client, &doc.id, &doc.status).await?;
+        let renamed = docs.rename(&doc.id, &new_name).await?;
+        let page = docs
+            .search(
+                &account_id,
+                SearchDocumentsRequest::new("rust-renamed").per_page(5),
+            )
+            .await?;
+        Ok((renamed, page))
+    }
+    .await;
     docs.delete(&doc.id).await.expect("delete document");
+    let (renamed, page) = workflow.expect("rename and search workflow");
+    assert_eq!(renamed.name, new_name);
+    assert!(page.meta.current_page.is_some(), "search is paginated");
 }
 
 #[tokio::test]
@@ -446,26 +439,33 @@ async fn templates_create_get_delete() {
     let file =
         CreateTemplateRequest::from_bytes(format!("{}.pdf", unique("rust-tpl")), minimal_pdf());
     let created = templates.create(file).await.expect("create template");
-    assert!(!created.id.is_empty(), "template has an id");
-
-    // A template cannot be deleted until it finishes processing.
-    let mut fetched = templates.get(&created.id).await.expect("get template");
-    assert_eq!(fetched.id, created.id);
-    let mut tries = 0;
-    while matches!(
-        fetched.status,
-        TemplateStatus::Processing | TemplateStatus::Uploading | TemplateStatus::Uploaded
-    ) {
-        assert!(tries < 30, "template stuck in {}", fetched.status);
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        fetched = templates.get(&created.id).await.expect("get template");
-        tries += 1;
+    let workflow: assinafy::Result<_> = async {
+        let mut fetched = templates.get(&created.id).await?;
+        let mut tries = 0;
+        while matches!(
+            fetched.status,
+            TemplateStatus::Processing | TemplateStatus::Uploading | TemplateStatus::Uploaded
+        ) {
+            if tries >= 30 {
+                return Err(assinafy::Error::UnexpectedResponse(format!(
+                    "template {} stuck in {}",
+                    created.id, fetched.status
+                )));
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            fetched = templates.get(&created.id).await?;
+            tries += 1;
+        }
+        Ok(fetched)
     }
-
+    .await;
     templates
         .delete(&created.id)
         .await
         .expect("delete template");
+    let fetched = workflow.expect("template processing workflow");
+    assert!(!created.id.is_empty(), "template has an id");
+    assert_eq!(fetched.id, created.id);
 }
 
 #[tokio::test]
@@ -478,6 +478,31 @@ async fn users_self_returns_profile() {
 
 #[tokio::test]
 #[ignore = "hits live sandbox"]
+async fn production_only_stats_and_preferences_are_absent_from_sandbox() {
+    let (client, account_id) = sandbox_or_skip!();
+    let query = DocumentStatsQuery::monthly();
+    let errors = [
+        client
+            .account(&account_id)
+            .stats(&query)
+            .await
+            .expect_err("account stats should be absent from sandbox"),
+        client
+            .users()
+            .stats(&query)
+            .await
+            .expect_err("user stats should be absent from sandbox"),
+        client
+            .users()
+            .notification_preferences()
+            .await
+            .expect_err("notification preferences should be absent from sandbox"),
+    ];
+    assert!(errors.iter().all(|error| error.status() == Some(404)));
+}
+
+#[tokio::test]
+#[ignore = "hits live sandbox"]
 async fn document_tags_attach_by_name_and_detach_by_id() {
     let (client, account_id) = sandbox_or_skip!();
     let docs = client.documents();
@@ -486,67 +511,58 @@ async fn document_tags_attach_by_name_and_detach_by_id() {
     let upload =
         UploadDocumentRequest::from_bytes(format!("{}.pdf", unique("rust-doctag")), minimal_pdf());
     let doc = docs.upload(&account_id, upload).await.expect("upload");
-    wait_until_deletable(&client, &doc.id, &doc.status).await;
-
-    // `add_to_document` upserts by NAME, not by id: the tag comes back named
-    // exactly as requested (a real tag id would create a tag named after it).
     let name = unique("rust-doctag");
-    let attached = tags
-        .add_to_document(&doc.id, [name.as_str()])
-        .await
-        .expect("add_to_document");
-    let created = attached
-        .iter()
-        .find(|t| t.name == name)
-        .expect("tag named as requested");
-
-    let listed = tags
-        .list_for_document(&doc.id)
-        .await
-        .expect("list_for_document");
-    assert!(listed.iter().any(|t| t.id == created.id));
-
-    // `set_on_document` replaces the whole set.
     let replacement = unique("rust-doctag-set");
-    let after_set = tags
-        .set_on_document(&doc.id, [replacement.as_str()])
-        .await
-        .expect("set_on_document");
-    assert!(after_set.iter().any(|t| t.name == replacement));
-
-    // Detach takes a real tag id, unlike the two attach calls above.
-    for tag in tags.list_for_document(&doc.id).await.expect("list tags") {
-        assert!(
-            tags.remove_from_document(&doc.id, &tag.id)
-                .await
-                .expect("remove_from_document")
-        );
+    let workflow: assinafy::Result<_> = async {
+        wait_until_deletable(&client, &doc.id, &doc.status).await?;
+        let attached = tags.add_to_document(&doc.id, [name.as_str()]).await?;
+        let created_id = attached
+            .iter()
+            .find(|tag| tag.name == name)
+            .map(|tag| tag.id.clone())
+            .ok_or_else(|| {
+                assinafy::Error::UnexpectedResponse("attached tag was not returned".into())
+            })?;
+        let listed = tags.list_for_document(&doc.id).await?;
+        let after_set = tags
+            .set_on_document(&doc.id, [replacement.as_str()])
+            .await?;
+        let mut all_detached = true;
+        for tag in tags.list_for_document(&doc.id).await? {
+            all_detached &= tags.remove_from_document(&doc.id, &tag.id).await?;
+        }
+        let remaining = tags.list_for_document(&doc.id).await?;
+        Ok((created_id, listed, after_set, all_detached, remaining))
     }
-    assert!(
-        tags.list_for_document(&doc.id)
-            .await
-            .expect("list tags")
-            .is_empty()
-    );
+    .await;
 
-    // Both upserts created account-level tags; `set_on_document` only
-    // detached the first one, so delete both to leave no residue.
-    for name in [&name, &replacement] {
-        for tag in tags
-            .list()
-            .search(name)
-            .send()
-            .await
-            .expect("search tags")
-            .data
-        {
-            if &tag.name == name {
-                assert!(tags.delete(&tag.id).await.expect("delete tag"));
+    let mut cleanup_errors = Vec::new();
+    if let Err(error) = docs.delete(&doc.id).await {
+        cleanup_errors.push(format!("delete document: {error}"));
+    }
+    for cleanup_name in [&name, &replacement] {
+        match tags.list().search(cleanup_name).send().await {
+            Ok(page) => {
+                for tag in page.data.iter().filter(|tag| &tag.name == cleanup_name) {
+                    if let Err(error) = tags.delete_with_force(&tag.id, true).await {
+                        cleanup_errors.push(format!("delete tag {}: {error}", tag.id));
+                    }
+                }
             }
+            Err(error) => cleanup_errors.push(format!("find tag {cleanup_name}: {error}")),
         }
     }
+    assert!(
+        cleanup_errors.is_empty(),
+        "cleanup failed: {cleanup_errors:?}"
+    );
 
-    docs.delete(&doc.id).await.expect("delete document");
+    let (created_id, listed, after_set, all_detached, remaining) =
+        workflow.expect("document tag workflow");
+    assert!(listed.iter().any(|tag| tag.id == created_id));
+    assert!(after_set.iter().any(|tag| tag.name == replacement));
+    assert!(all_detached);
+    assert!(remaining.is_empty());
 }
 
 #[tokio::test]
@@ -560,31 +576,23 @@ async fn download_artifact_returns_raw_bytes_and_redirects_thumbnail() {
     let upload =
         UploadDocumentRequest::from_bytes(format!("{}.pdf", unique("rust-dl")), minimal_pdf());
     let doc = docs.upload(&account_id, upload).await.expect("upload");
-    wait_until_deletable(&client, &doc.id, &doc.status).await;
-
-    let (bytes, content_type) = docs
-        .download_artifact(&doc.id, ArtifactName::Original)
-        .await
-        .expect("download original");
-    assert!(!bytes.is_empty(), "artifact bytes are non-empty");
-    assert!(
-        content_type.contains("pdf"),
-        "unexpected content-type: {content_type}"
-    );
-
-    // `ArtifactName::Thumbnail` is not valid on the `download/{name}` route;
-    // the SDK redirects it to the dedicated `/thumbnail` route instead.
-    let via_artifact = docs
-        .download_artifact(&doc.id, ArtifactName::Thumbnail)
-        .await;
-    let via_thumbnail = docs.download_thumbnail(&doc.id).await;
-    assert_eq!(
-        via_artifact.is_ok(),
-        via_thumbnail.is_ok(),
-        "Thumbnail must behave identically through both entry points"
-    );
-
+    let workflow: assinafy::Result<_> = async {
+        wait_until_deletable(&client, &doc.id, &doc.status).await?;
+        let original = docs
+            .download_artifact(&doc.id, ArtifactName::Original)
+            .await?;
+        let via_artifact = docs
+            .download_artifact(&doc.id, ArtifactName::Thumbnail)
+            .await;
+        let via_thumbnail = docs.download_thumbnail(&doc.id).await;
+        Ok((original, via_artifact, via_thumbnail))
+    }
+    .await;
     docs.delete(&doc.id).await.expect("delete document");
+    let ((bytes, content_type), via_artifact, via_thumbnail) = workflow.expect("download workflow");
+    assert!(!bytes.is_empty(), "artifact bytes are non-empty");
+    assert!(content_type.contains("pdf"));
+    assert_eq!(via_artifact.is_ok(), via_thumbnail.is_ok());
 }
 
 #[tokio::test]
@@ -595,27 +603,17 @@ async fn assignment_lifecycle_covers_estimate_get_resend_and_reset() {
     let signers = client.signers(&account_id);
     let assignments = client.assignments();
 
-    let email_variable = "ASSINAFY_TEST_EMAIL_PRIMARY";
-    let email = match std::env::var(email_variable) {
-        Ok(address) => {
-            let (local, domain) = address
-                .rsplit_once('@')
-                .filter(|(local, domain)| !local.is_empty() && !domain.is_empty())
-                .unwrap_or_else(|| panic!("{email_variable} must contain a valid test email"));
-            format!("{local}+{}@{domain}", unique("rust-sdk-assignment"))
-        }
-        Err(_) => {
-            eprintln!("skipping: {email_variable} is required for notification tests");
-            return;
-        }
-    };
+    let email = unique_email("ASSINAFY_TEST_EMAIL_PRIMARY");
 
     let upload = UploadDocumentRequest::from_bytes(
         format!("{}.pdf", unique("rust-assignment")),
         minimal_pdf(),
     );
     let doc = docs.upload(&account_id, upload).await.expect("upload");
-    wait_until_deletable(&client, &doc.id, &doc.status).await;
+    if let Err(error) = wait_until_deletable(&client, &doc.id, &doc.status).await {
+        let cleanup = docs.delete(&doc.id).await;
+        panic!("wait for assignment document: {error}; cleanup: {cleanup:?}");
+    }
 
     let signer = match signers
         .create(&CreateSignerBody::new(unique("Rust SDK Assignment Signer")).email(email.as_str()))
@@ -706,15 +704,11 @@ async fn wait_until_deletable(
     client: &assinafy::Client,
     document_id: &str,
     initial: &assinafy::models::DocumentStatus,
-) {
+) -> assinafy::Result<()> {
     use assinafy::models::DocumentStatus;
     use std::time::Duration;
 
-    let statuses = client
-        .documents()
-        .statuses()
-        .await
-        .expect("documents/statuses");
+    let statuses = client.documents().statuses().await?;
     let is_deletable = |s: &DocumentStatus| {
         statuses
             .iter()
@@ -724,19 +718,16 @@ async fn wait_until_deletable(
     let mut status = initial.clone();
     let mut tries = 0;
     while !is_deletable(&status) {
-        assert!(
-            tries < 30,
-            "document {document_id} stuck in non-deletable status {status}"
-        );
+        if tries >= 30 {
+            return Err(assinafy::Error::UnexpectedResponse(format!(
+                "document {document_id} stuck in non-deletable status {status}"
+            )));
+        }
         tokio::time::sleep(Duration::from_secs(1)).await;
-        status = client
-            .documents()
-            .get(document_id)
-            .await
-            .expect("get doc")
-            .status;
+        status = client.documents().get(document_id).await?.status;
         tries += 1;
     }
+    Ok(())
 }
 
 /// A 1-page valid PDF used to exercise the upload endpoint without bundling a

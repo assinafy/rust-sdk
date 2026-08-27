@@ -1,16 +1,9 @@
 //! Template endpoints.
 //!
 //! Templates are reusable documents with predefined roles and field
-//! placements. Only three template operations are published in the official
-//! OpenAPI reference — [`list`](TemplatesApi::list),
-//! [`create_document`](TemplatesApi::create_document) and
-//! [`estimate_cost`](TemplatesApi::estimate_cost). The remaining CRUD methods
-//! ([`create`](TemplatesApi::create), [`get`](TemplatesApi::get),
-//! [`update`](TemplatesApi::update), [`delete`](TemplatesApi::delete) and
-//! [`download_page`](TemplatesApi::download_page)) target routes that are **not
-//! part of the published spec** but are implemented by the live API; they were
-//! verified against the sandbox and are provided for completeness. Their
-//! request/response shapes may change without notice.
+//! placements. The core operations list templates, create documents, and
+//! estimate cost. Compatibility CRUD and page-download methods are also
+//! available; deployments can disable those routes.
 
 use std::path::Path;
 
@@ -107,13 +100,13 @@ impl<'a> ListTemplatesRequest<'a> {
         self
     }
 
-    /// Filter by template status.
+    /// Compatibility filter by template status. Deployments may ignore it.
     pub fn status<S: Into<String>>(mut self, status: S) -> Self {
         self.status = Some(status.into());
         self
     }
 
-    /// Filter by tag IDs.
+    /// Compatibility filter by tag IDs. Deployments may ignore it.
     pub fn tags<I, S>(mut self, tags: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -142,7 +135,7 @@ impl<'a> ListTemplatesRequest<'a> {
     ///     "status": "Ready",
     ///     "pages": [
     ///       { "id": "103b03b8c1a0", "number": 1, "height": 1651, "width": 1275,
-    ///         "download_url": "https://sandbox.assinafy.com.br/v1/accounts/102d25a4.../templates/103b03b8.../pages/103b03b8.../download" }
+    ///         "download_url": "https://api.example.invalid/v1/accounts/102d25a4a1b2c3d4e5f60718/templates/103b03b8e5f14a2c9d7e0011a2b3/pages/103b03b8c1a0d2e3f4a5b6c7d8e9/download" }
     ///     ],
     ///     "roles": [
     ///       { "id": "fa8c14f32d732271e071998246e", "name": "Signer",
@@ -156,7 +149,9 @@ impl<'a> ListTemplatesRequest<'a> {
     /// ] }
     /// ```
     pub async fn send(self) -> Result<Page<Template>> {
-        let path = format!("accounts/{}/templates", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id, "templates"])?;
         let mut req = self.http.request(Method::GET, &path)?;
         let mut q: Vec<(&str, String)> = Vec::new();
         if let Some(v) = self.page {
@@ -213,13 +208,14 @@ pub struct TemplateDocumentSigner {
     /// Existing signer identifier to bind to the role.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// Full name when creating or resolving a signer inline.
+    /// Legacy inline-signer field. The current create endpoint rejects inline
+    /// signers; use [`TemplateDocumentSigner::existing`] instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_name: Option<String>,
-    /// Email address when creating or resolving a signer inline.
+    /// Legacy inline-signer field, unsupported by the current create endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    /// WhatsApp phone number when creating or resolving a signer inline.
+    /// Legacy inline-signer field, unsupported by the current create endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
     /// Verification method override.
@@ -271,13 +267,11 @@ impl TemplateDocumentSigner {
 
     /// Create an inline signer for a template role.
     ///
-    /// Live sandbox calls to
-    /// [`create_document`](TemplatesApi::create_document) with a `signers[]`
-    /// entry that omits `id` are rejected with a 400 — the endpoint requires
-    /// a signer that already exists in the account, matching the spec's
-    /// "the signers must already exist in the account". Create the signer
-    /// with [`SignersApi::create`](crate::resources::SignersApi::create),
-    /// then bind it with [`TemplateDocumentSigner::existing`].
+    /// [`create_document`](TemplatesApi::create_document) requires each signer
+    /// to already exist in the account and rejects this inline form before
+    /// sending. Create the signer with
+    /// [`SignersApi::create`](crate::resources::SignersApi::create), then bind
+    /// it with [`TemplateDocumentSigner::existing`].
     #[deprecated(
         since = "2.0.0",
         note = "create_document requires an existing signer id; use TemplateDocumentSigner::existing after SignersApi::create"
@@ -299,13 +293,21 @@ impl TemplateDocumentSigner {
         }
     }
 
-    /// Set the email address.
+    /// Set the legacy inline-signer email address.
+    #[deprecated(
+        since = "2.0.1",
+        note = "template document creation requires an existing signer id"
+    )]
     pub fn email<S: Into<String>>(mut self, email: S) -> Self {
         self.email = Some(email.into());
         self
     }
 
-    /// Set the WhatsApp phone number.
+    /// Set the legacy inline-signer WhatsApp phone number.
+    #[deprecated(
+        since = "2.0.1",
+        note = "template document creation requires an existing signer id"
+    )]
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
         self
@@ -348,7 +350,7 @@ pub struct EditorField {
     /// Field identifier, matching the `field_id` of an editor field on the
     /// template.
     pub field_id: String,
-    /// Value to assign to the field. The production API requires a string;
+    /// Value to assign to the field. The endpoint requires a string;
     /// the broad JSON type remains for source compatibility and is validated
     /// by [`TemplatesApi::create_document`] before a request is sent.
     pub value: serde_json::Value,
@@ -367,6 +369,16 @@ fn validate_create_document(body: &CreateDocumentFromTemplateBody) -> Result<()>
     {
         return Err(Error::Config(
             "every template document signer must have an id".into(),
+        ));
+    }
+    if body.signers.iter().any(|signer| {
+        signer.full_name.is_some()
+            || signer.email.is_some()
+            || signer.whatsapp_phone_number.is_some()
+    }) {
+        return Err(Error::Config(
+            "template document signers cannot contain inline name, email, or WhatsApp fields; create the signer first and pass its id"
+                .into(),
         ));
     }
     if let Some(field) = body
@@ -556,10 +568,9 @@ impl<'a> TemplatesApi<'a> {
 
     /// Retrieve a template by ID.
     ///
-    /// `GET /accounts/{account_id}/templates/{template_id}`. **Not part of the
-    /// published spec** — verified against the live API. The single-template
-    /// response additionally includes `default_document_tags` and per-page
-    /// `fields`, neither of which appear on list items.
+    /// `GET /accounts/{account_id}/templates/{template_id}`. This compatibility
+    /// route can be disabled by a deployment. Its response includes
+    /// `default_document_tags` and per-page `fields`.
     ///
     /// # Response payload
     ///
@@ -574,7 +585,7 @@ impl<'a> TemplatesApi<'a> {
     ///   "pages": [
     ///     { "id": "103b07167080eeee6abb709dfa0e", "number": 1,
     ///       "height": 1651, "width": 1275,
-    ///       "download_url": "https://…/pages/103b07167080eeee6abb709dfa0e/download",
+    ///       "download_url": "https://api.example.invalid/v1/accounts/102d25a4a1b2c3d4e5f60718/templates/103b0716216a0a1d57f5a6ac63a4/pages/103b07167080eeee6abb709dfa0e/download",
     ///       "fields": [] }
     ///   ],
     ///   "roles": [
@@ -589,20 +600,21 @@ impl<'a> TemplatesApi<'a> {
     ///   "default_document_tags": [] } }
     /// ```
     pub async fn get<S: AsRef<str>>(&self, template_id: S) -> Result<Template> {
-        let path = format!(
-            "accounts/{}/templates/{}",
-            self.account_id,
-            template_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "templates",
+            template_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
 
     /// Create a template from a source file.
     ///
-    /// `POST /accounts/{account_id}/templates` (multipart/form-data, `file`
-    /// part). **Not part of the published spec** — verified against the live
-    /// API, which requires multipart form data and rejects JSON bodies.
+    /// `POST /accounts/{account_id}/templates` using `multipart/form-data` with
+    /// one `file` part. This compatibility route can be disabled by a
+    /// deployment.
     ///
     /// ```no_run
     /// # use assinafy::{Client, resources::CreateTemplateRequest};
@@ -616,13 +628,20 @@ impl<'a> TemplatesApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "resource": "template", "id": "103b03b8...", "name": "agreement.pdf",
-    ///   "document_name": "agreement.pdf", "status": "Uploaded",
-    ///   "pages": [], "roles": [ { "id": "…", "name": "TemplateEditor", "assignment_type": "Editor" } ],
-    ///   "tags": [] } }
+    ///   "resource": "template", "id": "103b03b8e5f14a2c9d7e0011a2b3", "name": "agreement.pdf",
+    ///   "document_name": "agreement.pdf", "message": null, "status": "Uploaded",
+    ///   "pages": [],
+    ///   "roles": [ { "id": "103b03b8f1e2d3c4b5a697887766", "name": "TemplateEditor",
+    ///     "assignment_type": "Editor", "created_at": "2026-07-20T18:06:41Z",
+    ///     "updated_at": "2026-07-20T18:06:41Z" } ],
+    ///   "tags": [], "default_document_tags": [],
+    ///   "created_at": "2026-07-20T18:06:40Z",
+    ///   "updated_at": "2026-07-20T18:06:40Z" } }
     /// ```
     pub async fn create(&self, file: CreateTemplateRequest) -> Result<Template> {
-        let path = format!("accounts/{}/templates", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "templates"])?;
         let form = file.into_form()?;
         let req = self.http.request(Method::POST, &path)?.multipart(form);
         self.http.send_data(req).await
@@ -630,40 +649,66 @@ impl<'a> TemplatesApi<'a> {
 
     /// Rename/update a template's metadata.
     ///
-    /// `PUT /accounts/{account_id}/templates/{template_id}`. **Not part of the
-    /// published spec** — verified against the live API. Accepts any
-    /// serializable JSON body (the live API honors `{ "name": "…" }`).
+    /// `PUT /accounts/{account_id}/templates/{template_id}`. This compatibility
+    /// route can be disabled by a deployment. It accepts a serializable JSON
+    /// body such as `{ "name": "Updated template name" }`.
     ///
     /// # Request payload
     ///
     /// ```json
     /// { "name": "Updated template name" }
     /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "resource": "template",
+    ///   "id": "103b0716216a0a1d57f5a6ac63a4",
+    ///   "name": "Updated template name",
+    ///   "document_name": "service-agreement.pdf",
+    ///   "message": null,
+    ///   "status": "Ready",
+    ///   "pages": [],
+    ///   "roles": [],
+    ///   "tags": [],
+    ///   "default_document_tags": [],
+    ///   "created_at": "2026-07-20T18:06:40Z",
+    ///   "updated_at": "2026-07-20T18:10:00Z"
+    /// } }
+    /// ```
     pub async fn update<S, B>(&self, template_id: S, body: &B) -> Result<Template>
     where
         S: AsRef<str>,
         B: Serialize + ?Sized,
     {
-        let path = format!(
-            "accounts/{}/templates/{}",
-            self.account_id,
-            template_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "templates",
+            template_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::PUT, &path)?.json(body);
         self.http.send_data(req).await
     }
 
     /// Delete a template.
     ///
-    /// `DELETE /accounts/{account_id}/templates/{template_id}`. **Not part of
-    /// the published spec** — verified against the live API (returns a `200`
-    /// envelope; a subsequent fetch returns `404`).
+    /// `DELETE /accounts/{account_id}/templates/{template_id}`. This
+    /// compatibility route can be disabled by a deployment.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [] }
+    /// ```
     pub async fn delete<S: AsRef<str>>(&self, template_id: S) -> Result<()> {
-        let path = format!(
-            "accounts/{}/templates/{}",
-            self.account_id,
-            template_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "templates",
+            template_id.as_ref(),
+        ])?;
         let req = self.http.request(Method::DELETE, &path)?;
         self.http.send_no_content(req).await
     }
@@ -671,19 +716,27 @@ impl<'a> TemplatesApi<'a> {
     /// Download a rendered template page.
     ///
     /// `GET /accounts/{account_id}/templates/{template_id}/pages/{page_id}/download`.
-    /// **Not part of the published spec** — the page `download_url` returned by
-    /// [`get`](Self::get) points at this route.
+    /// This compatibility route can be disabled by a deployment.
+    ///
+    /// # Response
+    ///
+    /// The response body is the raw rendered page bytes, normally
+    /// `image/jpeg`, rather than a JSON envelope. The returned tuple contains
+    /// the bytes and the response `Content-Type` header.
     pub async fn download_page<T: AsRef<str>, P: AsRef<str>>(
         &self,
         template_id: T,
         page_id: P,
     ) -> Result<(Bytes, String)> {
-        let path = format!(
-            "accounts/{}/templates/{}/pages/{}/download",
-            self.account_id,
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "templates",
             template_id.as_ref(),
-            page_id.as_ref()
-        );
+            "pages",
+            page_id.as_ref(),
+            "download",
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_download(req).await
     }
@@ -723,9 +776,9 @@ impl<'a> TemplatesApi<'a> {
     ///   "template_id": "103b03b8e5f14a2c9d7e0011a2b3",
     ///   "name": "Service Agreement — Acme",
     ///   "status": "uploaded",
-    ///   "artifacts": { "original": "https://sandbox.assinafy.com.br/v1/documents/103acccd.../download/original" },
+    ///   "artifacts": { "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original" },
     ///   "is_closed": false,
-    ///   "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd...",
+    ///   "signing_url": "https://app.example.invalid/sign/103acccd24234c07858ffddf6d84",
     ///   "decline_reason": null,
     ///   "declined_by": null,
     ///   "tags": [],
@@ -741,11 +794,13 @@ impl<'a> TemplatesApi<'a> {
         body: &CreateDocumentFromTemplateBody,
     ) -> Result<Document> {
         validate_create_document(body)?;
-        let path = format!(
-            "accounts/{}/templates/{}/documents",
-            self.account_id,
-            template_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "templates",
+            template_id.as_ref(),
+            "documents",
+        ])?;
         let req = self.http.request(Method::POST, &path)?.json(body);
         self.http.send_data(req).await
     }
@@ -788,11 +843,14 @@ impl<'a> TemplatesApi<'a> {
         template_id: S,
         body: &EstimateTemplateCostBody,
     ) -> Result<CostEstimate> {
-        let path = format!(
-            "accounts/{}/templates/{}/documents/estimate-cost",
-            self.account_id,
-            template_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "templates",
+            template_id.as_ref(),
+            "documents",
+            "estimate-cost",
+        ])?;
         let payload = EstimateTemplatePayload::from(body);
         let req = self.http.request(Method::POST, &path)?.json(&payload);
         self.http.send_envelope(req).await
@@ -859,5 +917,14 @@ mod tests {
         let valid = CreateDocumentFromTemplateBody::default()
             .signers([TemplateDocumentSigner::existing("role-id", "signer-id")]);
         assert!(validate_create_document(&valid).is_ok());
+
+        #[allow(deprecated)]
+        let inline_fields = CreateDocumentFromTemplateBody::default()
+            .signers([TemplateDocumentSigner::existing("role-id", "signer-id")
+                .email("user@example.invalid")]);
+        assert!(matches!(
+            validate_create_document(&inline_fields),
+            Err(Error::Config(_))
+        ));
     }
 }

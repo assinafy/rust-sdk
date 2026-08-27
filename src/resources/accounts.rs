@@ -217,8 +217,13 @@ impl<'a> AccountsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
-    ///   { "id": "102d25a4...", "name": "Acme Inc.", "roles": ["owner"],
-    ///     "is_delete_allowed": true, "created_at": "2026-05-12T18:05:11Z" }
+    ///   {
+    ///     "id": "102d25a4a1b2c3d4e5f60718",
+    ///     "name": "Acme Inc.",
+    ///     "roles": ["owner"],
+    ///     "is_delete_allowed": true,
+    ///     "created_at": "2026-05-12T18:05:11Z"
+    ///   }
     /// ]}
     /// ```
     pub async fn list(&self) -> Result<Vec<Account>> {
@@ -239,7 +244,17 @@ impl<'a> AccountsApi<'a> {
     /// # Response payload
     ///
     /// ```json
-    /// { "status": 200, "message": "", "data": { "id": "…", "name": "Acme Inc.", "created_at": "…" } }
+    /// { "status": 200, "message": "", "data": {
+    ///   "resource": "account",
+    ///   "id": "102d25a4a1b2c3d4e5f60718",
+    ///   "name": "Acme Inc.",
+    ///   "primary_color": null,
+    ///   "secondary_color": null,
+    ///   "notification_sender_type": "Account",
+    ///   "roles": ["owner"],
+    ///   "is_delete_allowed": true,
+    ///   "created_at": "2026-05-12T18:05:11Z"
+    /// } }
     /// ```
     pub async fn create(&self, body: &CreateAccountBody) -> Result<Account> {
         let req = self.http.request(Method::POST, "accounts")?.json(body);
@@ -269,12 +284,14 @@ impl<'a> AccountApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "id": "102d25a4...", "name": "Acme Inc.",
+    ///   "resource": "account",
+    ///   "id": "102d25a4a1b2c3d4e5f60718", "name": "Acme Inc.",
     ///   "primary_color": null, "secondary_color": null,
+    ///   "notification_sender_type": "User",
     ///   "created_at": "2026-05-12T18:05:11Z" } }
     /// ```
     pub async fn get(&self) -> Result<Account> {
-        let path = format!("accounts/{}", self.account_id);
+        let path = self.http.path(&["accounts", self.account_id.as_str()])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -293,12 +310,14 @@ impl<'a> AccountApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "id": "102d25a4...", "name": "New name",
+    ///   "resource": "account",
+    ///   "id": "102d25a4a1b2c3d4e5f60718", "name": "New name",
     ///   "primary_color": null, "secondary_color": null,
+    ///   "notification_sender_type": "User",
     ///   "created_at": "2026-05-12T18:05:11Z" } }
     /// ```
     pub async fn update(&self, body: &UpdateAccountBody) -> Result<Account> {
-        let path = format!("accounts/{}", self.account_id);
+        let path = self.http.path(&["accounts", self.account_id.as_str()])?;
         let req = self.http.request(Method::PUT, &path)?.json(body);
         self.http.send_envelope(req).await
     }
@@ -339,7 +358,7 @@ impl<'a> AccountApi<'a> {
     }
 
     async fn delete_inner(&self, force: bool) -> Result<()> {
-        let path = format!("accounts/{}", self.account_id);
+        let path = self.http.path(&["accounts", self.account_id.as_str()])?;
         let mut req = self.http.request(Method::DELETE, &path)?;
         if force {
             req = req.json(&serde_json::json!({ "force": true }));
@@ -359,7 +378,9 @@ impl<'a> AccountApi<'a> {
     ///   "secondary_color": "ffffff", "logo": null } }
     /// ```
     pub async fn theme(&self) -> Result<AccountTheme> {
-        let path = format!("accounts/{}/theme", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "theme"])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -368,7 +389,8 @@ impl<'a> AccountApi<'a> {
     ///
     /// `GET /accounts/{account_id}/stats`. Monthly queries return the last 12
     /// months, most recent first. Daily queries return every day in the
-    /// requested month. The API zero-fills both series.
+    /// requested month. The API zero-fills both series. This endpoint is
+    /// available on production and is not exposed by the sandbox.
     ///
     /// # Request parameters
     ///
@@ -384,15 +406,22 @@ impl<'a> AccountApi<'a> {
     ///   "documents_uploaded": 4,
     ///   "documents_sent": 3,
     ///   "signature_requests": 6,
-    ///   "signature_requests_email": 5,
-    ///   "signature_requests_whatsapp": 1,
+    ///   "signature_requests_notification_email": 5,
+    ///   "signature_requests_notification_whatsapp": 1,
+    ///   "signature_requests_notification_bypass": 0,
+    ///   "signature_requests_verification_email": 5,
+    ///   "signature_requests_verification_whatsapp": 1,
+    ///   "signature_requests_verification_bypass": 0,
+    ///   "signature_requests_verification_digital_certificate": 0,
     ///   "signature_requests_viewed": 4,
     ///   "signature_requests_completed": 5,
     ///   "documents_certified": 3
     /// }] }
     /// ```
     pub async fn stats(&self, query: &DocumentStatsQuery) -> Result<Vec<DocumentStatsRow>> {
-        let path = format!("accounts/{}/stats", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "stats"])?;
         let req = self.http.request(Method::GET, &path)?.query(query);
         self.http.send_envelope(req).await
     }
@@ -401,8 +430,16 @@ impl<'a> AccountApi<'a> {
     ///
     /// `GET /accounts/{account_id}/logo`. Returns an [`Error::Api`] with status
     /// `404` when no logo has been uploaded.
+    ///
+    /// # Response
+    ///
+    /// The response is the raw logo image (`image/png` or `image/jpeg`), not a
+    /// JSON envelope. The returned tuple contains the bytes and the response
+    /// `Content-Type` header.
     pub async fn download_logo(&self) -> Result<(Bytes, String)> {
-        let path = format!("accounts/{}/logo", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "logo"])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_download(req).await
     }
@@ -425,7 +462,9 @@ impl<'a> AccountApi<'a> {
     /// { "status": 200, "message": "" }
     /// ```
     pub async fn upload_logo(&self, logo: UploadLogoRequest) -> Result<()> {
-        let path = format!("accounts/{}/logo", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "logo"])?;
         let form = logo.into_form()?;
         let req = self.http.request(Method::POST, &path)?.multipart(form);
         self.http.send_no_content(req).await
@@ -441,7 +480,9 @@ impl<'a> AccountApi<'a> {
     /// { "status": 200, "message": "" }
     /// ```
     pub async fn delete_logo(&self) -> Result<()> {
-        let path = format!("accounts/{}/logo", self.account_id);
+        let path = self
+            .http
+            .path(&["accounts", self.account_id.as_str(), "logo"])?;
         let req = self.http.request(Method::DELETE, &path)?;
         self.http.send_no_content(req).await
     }
@@ -480,8 +521,13 @@ mod tests {
             "documents_uploaded": 42,
             "documents_sent": 37,
             "signature_requests": 61,
-            "signature_requests_email": 55,
-            "signature_requests_whatsapp": 18,
+            "signature_requests_notification_email": 55,
+            "signature_requests_notification_whatsapp": 18,
+            "signature_requests_notification_bypass": 3,
+            "signature_requests_verification_email": 48,
+            "signature_requests_verification_whatsapp": 6,
+            "signature_requests_verification_bypass": 3,
+            "signature_requests_verification_digital_certificate": 4,
             "signature_requests_viewed": 44,
             "signature_requests_completed": 52,
             "documents_certified": 30
@@ -490,6 +536,24 @@ mod tests {
 
         assert_eq!(row.period, "2026-06");
         assert_eq!(row.signature_requests, 61);
+        assert_eq!(row.signature_requests_notification_email, 55);
+        assert_eq!(row.signature_requests_verification_digital_certificate, 4);
         assert_eq!(row.documents_certified, 30);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn document_stats_row_accepts_legacy_notification_counter_names() {
+        let row: DocumentStatsRow = serde_json::from_value(serde_json::json!({
+            "period": "2026-06",
+            "signature_requests_email": 5,
+            "signature_requests_whatsapp": 1
+        }))
+        .unwrap();
+
+        assert_eq!(row.signature_requests_notification_email, 5);
+        assert_eq!(row.signature_requests_notification_whatsapp, 1);
+        assert_eq!(row.signature_requests_email, 5);
+        assert_eq!(row.signature_requests_whatsapp, 1);
     }
 }

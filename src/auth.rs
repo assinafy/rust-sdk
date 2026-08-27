@@ -29,6 +29,10 @@ pub enum Auth {
 }
 
 impl Auth {
+    pub(crate) fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
     /// Apply the credential to a [`RequestBuilder`].
     pub(crate) fn apply(&self, req: RequestBuilder) -> RequestBuilder {
         match self {

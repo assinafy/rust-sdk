@@ -171,7 +171,7 @@ impl<'a> ListWebhookDispatchesRequest<'a> {
     /// }
     /// ```
     pub async fn send(self) -> Result<Page<WebhookDispatch>> {
-        let path = format!("accounts/{}/webhooks", self.account_id);
+        let path = self.http.path(&["accounts", self.account_id, "webhooks"])?;
         let mut req = self.http.request(Method::GET, &path)?;
         let mut q: Vec<(&str, String)> = Vec::new();
         if let Some(v) = self.page {
@@ -248,7 +248,12 @@ impl<'a> WebhooksApi<'a> {
     /// }
     /// ```
     pub async fn register(&self, body: &RegisterWebhookBody) -> Result<WebhookSubscription> {
-        let path = format!("accounts/{}/webhooks/subscriptions", self.account_id);
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "webhooks",
+            "subscriptions",
+        ])?;
         let req = self.http.request(Method::PUT, &path)?.json(body);
         self.http.send_envelope(req).await
     }
@@ -275,7 +280,12 @@ impl<'a> WebhooksApi<'a> {
     /// }
     /// ```
     pub async fn get_subscription(&self) -> Result<Option<WebhookSubscription>> {
-        let path = format!("accounts/{}/webhooks/subscriptions", self.account_id);
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "webhooks",
+            "subscriptions",
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -284,7 +294,8 @@ impl<'a> WebhooksApi<'a> {
     ///
     /// `PUT /accounts/{account_id}/webhooks/inactivate`. This is the documented
     /// way to disable a webhook — the API has no delete-subscription route
-    /// (a `DELETE` on `.../webhooks/subscriptions` returns `404`). To re-enable
+    /// (a `DELETE` on `/accounts/{account_id}/webhooks/subscriptions` returns
+    /// `404`). To re-enable
     /// delivery, call [`register`](Self::register) with `is_active = true`.
     ///
     /// # Response payload
@@ -303,7 +314,12 @@ impl<'a> WebhooksApi<'a> {
     /// }
     /// ```
     pub async fn inactivate(&self) -> Result<WebhookSubscription> {
-        let path = format!("accounts/{}/webhooks/inactivate", self.account_id);
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "webhooks",
+            "inactivate",
+        ])?;
         let req = self.http.request(Method::PUT, &path)?;
         self.http.send_envelope(req).await
     }
@@ -382,11 +398,13 @@ impl<'a> WebhooksApi<'a> {
     /// }
     /// ```
     pub async fn retry_dispatch<S: AsRef<str>>(&self, dispatch_id: S) -> Result<WebhookDispatch> {
-        let path = format!(
-            "accounts/{}/webhooks/{}/retry",
-            self.account_id,
-            dispatch_id.as_ref()
-        );
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "webhooks",
+            dispatch_id.as_ref(),
+            "retry",
+        ])?;
         let req = self.http.request(Method::POST, &path)?;
         self.http.send_envelope(req).await
     }

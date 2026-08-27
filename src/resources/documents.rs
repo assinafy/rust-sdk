@@ -234,13 +234,16 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
-    ///   { "id": "103acccd...", "account_id": "102d25a4...", "template_id": null,
+    ///   { "id": "103acccd24234c07858ffddf6d84", "account_id": "102d25a4a1b2c3d4e5f60718", "template_id": null,
     ///     "name": "contract.pdf", "status": "metadata_ready",
-    ///     "artifacts": { "original": "https://…", "thumbnail": "https://…" },
-    ///     "is_closed": false, "signing_url": "https://…", "decline_reason": null,
+    ///     "artifacts": {
+    ///       "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original",
+    ///       "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail" },
+    ///     "is_closed": false, "signing_url": "https://app.example.invalid/sign/103acccd24234c07858ffddf6d84", "decline_reason": null,
     ///     "declined_by": null, "tags": [], "created_at": "2026-07-19T14:56:54Z",
     ///     "updated_at": "2026-07-19T14:56:56Z", "assignment": null,
-    ///     "pages": [ { "id": "…", "number": 1, "width": 1275, "height": 1651, "download_url": "https://…" } ] }
+    ///     "pages": [ { "id": "103acccd7080eeee6abb709dfa0e", "number": 1, "width": 1275, "height": 1651,
+    ///       "download_url": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/pages/103acccd7080eeee6abb709dfa0e/download" } ] }
     /// ]}
     /// ```
     pub async fn list<S: AsRef<str>>(
@@ -248,7 +251,9 @@ impl<'a> DocumentsApi<'a> {
         account_id: S,
         req: ListDocumentsRequest,
     ) -> Result<Page<Document>> {
-        let path = format!("accounts/{}/documents", account_id.as_ref());
+        let path = self
+            .http
+            .path(&["accounts", account_id.as_ref(), "documents"])?;
         let query = req.into_query();
         let mut request = self.http.request(Method::GET, &path)?;
         if !query.is_empty() {
@@ -272,10 +277,10 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "resource": "document", "id": "103b03a4...", "account_id": "102d25a4...",
+    ///   "resource": "document", "id": "103b03a4e5f14a2c9d7e0011a2b3", "account_id": "102d25a4a1b2c3d4e5f60718",
     ///   "template_id": null, "name": "contract.pdf", "status": "uploaded",
-    ///   "artifacts": { "original": "https://…" }, "is_closed": false,
-    ///   "signing_url": "https://…", "decline_reason": null, "declined_by": null,
+    ///   "artifacts": { "original": "https://api.example.invalid/v1/documents/103b03a4e5f14a2c9d7e0011a2b3/download/original" }, "is_closed": false,
+    ///   "signing_url": "https://app.example.invalid/sign/103b03a4e5f14a2c9d7e0011a2b3", "decline_reason": null, "declined_by": null,
     ///   "tags": [], "created_at": "2026-07-20T16:30:21Z",
     ///   "updated_at": "2026-07-20T16:30:21Z", "pages": [] } }
     /// ```
@@ -284,7 +289,9 @@ impl<'a> DocumentsApi<'a> {
         account_id: S,
         upload: UploadDocumentRequest,
     ) -> Result<Document> {
-        let path = format!("accounts/{}/documents", account_id.as_ref());
+        let path = self
+            .http
+            .path(&["accounts", account_id.as_ref(), "documents"])?;
         let form = upload.into_form()?;
         let req = self.http.request(Method::POST, &path)?.multipart(form);
         self.http.send_data(req).await
@@ -300,8 +307,9 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
-    ///   { "id": "103acc...", "name": "contract.pdf", "status": "metadata_ready",
-    ///     "account_id": "102d25a4...", "artifacts": { "original": "https://…" }, "tags": [] }
+    ///   { "id": "103acccd24234c07858ffddf6d84", "name": "contract.pdf", "status": "metadata_ready",
+    ///     "account_id": "102d25a4a1b2c3d4e5f60718",
+    ///     "artifacts": { "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original" }, "tags": [] }
     /// ]}
     /// ```
     pub async fn search<S: AsRef<str>>(
@@ -309,7 +317,9 @@ impl<'a> DocumentsApi<'a> {
         account_id: S,
         req: SearchDocumentsRequest,
     ) -> Result<Page<Document>> {
-        let path = format!("accounts/{}/documents/search", account_id.as_ref());
+        let path = self
+            .http
+            .path(&["accounts", account_id.as_ref(), "documents", "search"])?;
         let request = self
             .http
             .request(Method::GET, &path)?
@@ -325,14 +335,17 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "id": "103acc...", "account_id": "102d25a4...", "template_id": null,
+    ///   "id": "103acccd24234c07858ffddf6d84", "account_id": "102d25a4a1b2c3d4e5f60718", "template_id": null,
     ///   "name": "contract.pdf", "status": "metadata_ready",
-    ///   "artifacts": { "original": "https://…", "thumbnail": "https://…" },
+    ///   "artifacts": {
+    ///     "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original",
+    ///     "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail" },
     ///   "is_closed": false, "tags": [], "assignment": null,
-    ///   "pages": [ { "id": "…", "number": 1, "width": 1275, "height": 1651, "download_url": "https://…" } ] } }
+    ///   "pages": [ { "id": "103acccd7080eeee6abb709dfa0e", "number": 1, "width": 1275, "height": 1651,
+    ///     "download_url": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/pages/103acccd7080eeee6abb709dfa0e/download" } ] } }
     /// ```
     pub async fn get<S: AsRef<str>>(&self, document_id: S) -> Result<Document> {
-        let path = format!("documents/{}", document_id.as_ref());
+        let path = self.http.path(&["documents", document_id.as_ref()])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
@@ -355,7 +368,9 @@ impl<'a> DocumentsApi<'a> {
     ///   "resource": "document", "id": "103e4af8c99c19de9cabda1d22c4",
     ///   "account_id": "acc_1234567890abcdef12345678", "template_id": null,
     ///   "name": "Signed service agreement.pdf", "status": "metadata_ready",
-    ///   "artifacts": { "original": "https://…", "thumbnail": "https://…" },
+    ///   "artifacts": {
+    ///     "original": "https://api.example.invalid/v1/documents/103e4af8c99c19de9cabda1d22c4/download/original",
+    ///     "thumbnail": "https://api.example.invalid/v1/documents/103e4af8c99c19de9cabda1d22c4/thumbnail" },
     ///   "is_closed": false, "tags": [], "assignment": null, "pages": [] } }
     /// ```
     pub async fn rename<S: AsRef<str>, N: Into<String>>(
@@ -363,7 +378,7 @@ impl<'a> DocumentsApi<'a> {
         document_id: S,
         name: N,
     ) -> Result<Document> {
-        let path = format!("documents/{}", document_id.as_ref());
+        let path = self.http.path(&["documents", document_id.as_ref()])?;
         let req = self
             .http
             .request(Method::PATCH, &path)?
@@ -382,7 +397,7 @@ impl<'a> DocumentsApi<'a> {
     /// { "status": 200, "message": "", "data": [] }
     /// ```
     pub async fn delete<S: AsRef<str>>(&self, document_id: S) -> Result<()> {
-        let path = format!("documents/{}", document_id.as_ref());
+        let path = self.http.path(&["documents", document_id.as_ref()])?;
         let req = self.http.request(Method::DELETE, &path)?;
         self.http.send_no_content(req).await
     }
@@ -393,9 +408,8 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// [`ArtifactName::Thumbnail`] is transparently redirected to
     /// [`download_thumbnail`](Self::download_thumbnail) — the
-    /// `download/{artifact_name}` route only accepts `original`,
-    /// `certificated`, `certificate-page`, `pades`, and `bundle`; `thumbnail` is
-    /// live-verified to 404 there and is only served via the dedicated
+    /// `download/{artifact_name}` route accepts `original`, `certificated`,
+    /// `certificate-page`, `pades`, and `bundle`; thumbnails use the dedicated
     /// `/thumbnail` route.
     ///
     /// # Response
@@ -412,11 +426,12 @@ impl<'a> DocumentsApi<'a> {
         if artifact == ArtifactName::Thumbnail {
             return self.download_thumbnail(document_id).await;
         }
-        let path = format!(
-            "documents/{}/download/{}",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
-            artifact.as_str()
-        );
+            "download",
+            artifact.as_str(),
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_download(req).await
     }
@@ -434,7 +449,9 @@ impl<'a> DocumentsApi<'a> {
         &self,
         document_id: S,
     ) -> Result<(Bytes, String)> {
-        let path = format!("documents/{}/thumbnail", document_id.as_ref());
+        let path = self
+            .http
+            .path(&["documents", document_id.as_ref(), "thumbnail"])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_download(req).await
     }
@@ -453,11 +470,13 @@ impl<'a> DocumentsApi<'a> {
         document_id: D,
         page_id: P,
     ) -> Result<(Bytes, String)> {
-        let path = format!(
-            "documents/{}/pages/{}/download",
+        let path = self.http.path(&[
+            "documents",
             document_id.as_ref(),
-            page_id.as_ref()
-        );
+            "pages",
+            page_id.as_ref(),
+            "download",
+        ])?;
         let req = self.http.request(Method::GET, &path)?;
         self.http.send_download(req).await
     }
@@ -473,13 +492,15 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "hash": "FE32EDDADE7CBDDCBB934E7402047450B0E59C02", "id": "103acccd...",
+    ///   "hash": "FE32EDDADE7CBDDCBB934E7402047450B0E59C02", "id": "103acccd24234c07858ffddf6d84",
     ///   "status": "certificated", "page_count": "1", "signer_count": "1",
     ///   "completed_count": 1, "completed_at": "2026-07-19T19:27:44Z",
     ///   "verified_at": "2026-07-19T19:27:46Z", "is_valid": true, "message": "" } }
     /// ```
     pub async fn verify<S: AsRef<str>>(&self, signature_hash: S) -> Result<DocumentVerification> {
-        let path = format!("documents/{}/verify", signature_hash.as_ref());
+        let path = self
+            .http
+            .path(&["documents", signature_hash.as_ref(), "verify"])?;
         let req = self.http.request_public(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }

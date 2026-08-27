@@ -185,6 +185,7 @@ pub struct ClientBuilder {
     connect_timeout: Option<Duration>,
     user_agent: Option<String>,
     http_client: Option<reqwest::Client>,
+    allow_authenticated_http_client: bool,
 }
 
 impl ClientBuilder {
@@ -251,8 +252,8 @@ impl ClientBuilder {
         self
     }
 
-    /// Supply your own pre-configured [`reqwest::Client`]. The client must
-    /// support the features the SDK relies on (`json`, `multipart`, `stream`).
+    /// Supply your own pre-configured [`reqwest::Client`] for unauthenticated
+    /// requests.
     ///
     /// Only [`ClientBuilder::timeout`]/[`ClientBuilder::connect_timeout`] are
     /// bypassed when this is set (they configure `reqwest::Client` itself, so
@@ -263,27 +264,69 @@ impl ClientBuilder {
     /// configured on the supplied `reqwest::Client` itself has no effect. Use
     /// [`ClientBuilder::user_agent`] if you need a custom value.
     ///
-    /// The SDK-owned HTTP client disables automatic redirects and the `Referer`
-    /// header. Binary downloads follow redirects through the SDK's controlled
-    /// path, which sends credentials only to the configured API origin. A
-    /// custom client bypasses those safeguards; configure it with
-    /// [`reqwest::redirect::Policy::none`] (or a strict same-origin policy) and
-    /// call `reqwest::ClientBuilder::referer(false)`.
+    /// Reqwest does not expose a supplied client's redirect policy, and its
+    /// default cross-origin redirect handling does not strip Assinafy's
+    /// `X-Api-Key` header. This method therefore rejects custom-client requests
+    /// whenever a credential is configured. Prefer the SDK-owned client for
+    /// authenticated calls; use [`ClientBuilder::authenticated_http_client`]
+    /// only when the caller has disabled redirects explicitly.
     pub fn http_client(mut self, client: reqwest::Client) -> Self {
         self.http_client = Some(client);
+        self.allow_authenticated_http_client = false;
+        self
+    }
+
+    /// Supply a custom [`reqwest::Client`] for authenticated requests.
+    ///
+    /// # Security
+    ///
+    /// The supplied client must disable automatic redirects with
+    /// [`reqwest::redirect::Policy::none`] and disable the `Referer` header.
+    /// Reqwest does not expose those settings after construction, so the SDK
+    /// cannot verify them. A client that follows redirects can forward an
+    /// `X-Api-Key` header to another origin.
+    ///
+    /// ```
+    /// use assinafy::Client;
+    ///
+    /// let transport = reqwest::Client::builder()
+    ///     .redirect(reqwest::redirect::Policy::none())
+    ///     .referer(false)
+    ///     .build()
+    ///     .unwrap();
+    /// let client = Client::builder()
+    ///     .api_key("redacted-api-key")
+    ///     .authenticated_http_client(transport)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn authenticated_http_client(mut self, client: reqwest::Client) -> Self {
+        self.http_client = Some(client);
+        self.allow_authenticated_http_client = true;
         self
     }
 
     /// Finalise the builder.
     pub fn build(self) -> Result<Client> {
         let base = self.base_url.unwrap_or_default();
+        base.validate()?;
         let auth = self.auth.unwrap_or_default();
         let user_agent = self
             .user_agent
             .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
 
+        let restrict_custom_transport_auth =
+            self.http_client.is_some() && !self.allow_authenticated_http_client;
         let http = match self.http_client {
-            Some(c) => c,
+            Some(c) => {
+                if restrict_custom_transport_auth && !auth.is_none() {
+                    return Err(Error::Config(
+                        "custom HTTP clients cannot be used with credentials because their redirect policy cannot be verified"
+                            .into(),
+                    ));
+                }
+                c
+            }
             None => {
                 let builder = reqwest::Client::builder()
                     .user_agent(&user_agent)
@@ -301,7 +344,7 @@ impl ClientBuilder {
         };
 
         Ok(Client {
-            http: HttpClient::new(http, base, auth, user_agent),
+            http: HttpClient::new(http, base, auth, user_agent, restrict_custom_transport_auth),
         })
     }
 }
@@ -351,11 +394,17 @@ mod tests {
             request
         });
 
+        let transport = reqwest::Client::builder()
+            .referer(false)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
         let base = BaseUrl::custom(format!("http://{api_address}/v1")).unwrap();
         let client = Client::builder()
             .base_url(base)
             .api_key("sentinel-api-key")
-            .timeout(Duration::from_secs(2))
+            .authenticated_http_client(transport)
             .build()
             .unwrap();
 
@@ -372,5 +421,53 @@ mod tests {
         let target_request = target.join().unwrap().to_ascii_lowercase();
         assert!(!target_request.contains("sentinel-api-key"));
         assert!(!target_request.contains("referer:"));
+    }
+
+    #[tokio::test]
+    async fn public_binary_redirects_never_gain_credentials() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut first, _) = listener.accept().unwrap();
+            let first_request = read_request(&mut first);
+            first
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: /v1/artifact\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+
+            let (mut second, _) = listener.accept().unwrap();
+            let second_request = read_request(&mut second);
+            second
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: 3\r\nConnection: close\r\n\r\nPDF",
+                )
+                .unwrap();
+            [first_request, second_request]
+        });
+
+        let transport = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let base = BaseUrl::custom(format!("http://{address}/v1")).unwrap();
+        let client = Client::builder()
+            .base_url(base)
+            .http_client(transport)
+            .build()
+            .unwrap()
+            .with_auth(Auth::ApiKey("sentinel-api-key".into()));
+
+        let (body, content_type) = client
+            .signer_self()
+            .download_document("signer-id", "document-id", "original")
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"PDF");
+        assert_eq!(content_type, "application/pdf");
+
+        for request in server.join().unwrap() {
+            assert!(!request.to_ascii_lowercase().contains("sentinel-api-key"));
+        }
     }
 }
