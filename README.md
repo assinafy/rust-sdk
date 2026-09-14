@@ -427,4 +427,4 @@ Explicit ignored-test runs fail immediately when any value is absent.
 
 ## License
 
-Dual-licensed under MIT or Apache-2.0 at your option.
+Released under the [MIT License](LICENSE).
