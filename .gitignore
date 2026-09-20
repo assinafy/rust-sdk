@@ -5,3 +5,8 @@
 !tests/fixtures/*.pdf
 !examples/fixtures/*.pdf
 .DS_Store
+
+# Local working artifacts, not repository content.
+AUDIT.md
+AGENTS.md
+CLAUDE.md

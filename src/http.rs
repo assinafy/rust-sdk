@@ -120,6 +120,52 @@ impl HttpClient {
         Ok(segments.join("/"))
     }
 
+    /// Build the URL of an RFC 8615 `.well-known` document at the API
+    /// origin's root.
+    ///
+    /// These documents are defined at the origin, not under the versioned API
+    /// base path, so [`url`](Self::url) — which joins relative to the base and
+    /// refuses to leave it — cannot reach them.
+    pub(crate) fn well_known_url(&self, name: &str) -> Result<Url> {
+        let valid = !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            && !matches!(name, "." | "..");
+        if !valid {
+            return Err(Error::Config(
+                "`.well-known` document name is empty or contains unsafe URL syntax".into(),
+            ));
+        }
+        let url = self.base.join(&format!("/.well-known/{name}"))?;
+        if !same_origin(&url, &self.base) {
+            return Err(Error::Config(
+                "`.well-known` document escaped the configured API origin".into(),
+            ));
+        }
+        Ok(url)
+    }
+
+    /// Build an unauthenticated request against an absolute URL.
+    ///
+    /// OAuth discovery spans two hosts — this API and the authorization
+    /// server that issues tokens for it — so the target is not always
+    /// relative to the configured base URL. No credential is ever applied:
+    /// the authorization server is a separate origin and must not receive
+    /// this client's API key.
+    pub(crate) fn request_absolute_public(
+        &self,
+        method: Method,
+        url: Url,
+    ) -> Result<RequestBuilder> {
+        crate::config::validate_https_url(&url)?;
+        Ok(self
+            .inner
+            .request(method, url)
+            .header(ACCEPT, "application/json")
+            .header(reqwest::header::USER_AGENT, self.user_agent.as_str()))
+    }
+
     pub(crate) fn request(&self, method: Method, path: &str) -> Result<RequestBuilder> {
         if self.restrict_custom_transport_auth && !self.auth.is_none() {
             return Err(Error::Config(
@@ -335,8 +381,14 @@ fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Er
                 .and_then(|v| v.as_u64())
                 .map(|n| n as u16)
                 .unwrap_or_else(|| status.as_u16());
+            // The OAuth endpoints answer with RFC 6749 §5.2's flat
+            // `{error, error_description}` instead of this API's envelope, so
+            // there is no `message` to read; use the description, falling
+            // back to the bare error code.
             let message = map
                 .get("message")
+                .or_else(|| map.get("error_description"))
+                .or_else(|| map.get("error"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_owned();

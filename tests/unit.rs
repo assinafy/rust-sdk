@@ -296,14 +296,20 @@ fn api_key_response_accepts_null_envelope_data() {
 }
 
 #[test]
-fn documented_public_send_token_body_shape() {
+fn public_send_token_body_matches_the_live_contract() {
+    // The published spec describes a lone `email` field; the live API rejects
+    // that with `400 O atributo "channel" é obrigatório.` on both production
+    // and sandbox, so the SDK sends `{recipient, channel}`.
     let body = serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap();
     assert_eq!(
         body,
         serde_json::json!({
-            "email": "user@example.invalid"
+            "recipient": "user@example.invalid",
+            "channel": "email"
         })
     );
+    let whatsapp = serde_json::to_value(SendTokenBody::whatsapp("+5511999999999")).unwrap();
+    assert_eq!(whatsapp["channel"], "whatsapp");
 }
 
 #[test]

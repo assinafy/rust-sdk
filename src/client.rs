@@ -8,7 +8,8 @@ use crate::error::{Error, Result};
 use crate::http::HttpClient;
 use crate::resources::{
     AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, DocumentsApi,
-    FieldsApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, UsersApi, WebhooksApi,
+    FieldsApi, OAuthApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, UsersApi,
+    WebhooksApi,
 };
 
 /// Default user-agent used by the SDK.
@@ -94,6 +95,16 @@ impl Client {
     /// social login.
     pub fn auth_api(&self) -> AuthApi<'_> {
         AuthApi::new(&self.http)
+    }
+
+    /// OAuth 2.1 endpoints: discovery, token exchange, refresh, revocation
+    /// and OpenID Connect userinfo.
+    ///
+    /// Use these when an application acts in a user's workspace with that
+    /// user's permission. See [`OAuthApi`] for the full flow. Served by
+    /// production only.
+    pub fn oauth(&self) -> OAuthApi<'_> {
+        OAuthApi::new(&self.http)
     }
 
     /// API-key management for the authenticated user.

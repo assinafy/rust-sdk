@@ -20,6 +20,7 @@ mod assignments;
 mod auth;
 mod documents;
 mod fields;
+mod oauth;
 mod public;
 mod signer_self;
 mod signers;
@@ -48,7 +49,10 @@ pub use documents::{
 pub use fields::{
     CreateFieldBody, FieldsApi, ListFieldsRequest, UpdateFieldBody, ValidateFieldEntry,
 };
-pub use public::{LegacySendTokenBody, PublicApi, SendTokenBody, SendTokenResult};
+pub use oauth::{
+    AuthorizationRequest, OAuthApi, PkceChallenge, RevokeRequest, TokenRequest, scope,
+};
+pub use public::{PublicApi, SendTokenBody, SendTokenResult};
 pub use signer_self::{
     ConfirmSignerDataBody, DeclineMultipleDocumentsBody, ListSignerDocumentsRequest,
     SignMultipleDocumentsBody, SignerSelfApi, VerifyCodeBody,

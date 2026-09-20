@@ -11,12 +11,13 @@
 
 mod common;
 
+use assinafy::Client;
 use assinafy::models::{AssignmentMethod, NotificationMethod, VerificationMethod};
 use assinafy::resources::{
-    CreateAssignmentSigner, CreateFieldBody, CreateSignerBody, CreateTagBody,
-    CreateTemplateRequest, DocumentStatsQuery, EstimateAssignmentCostBody, LegacySendTokenBody,
-    SearchDocumentsRequest, UpdateFieldBody, UpdateSignerBody, UpdateTagBody,
-    UploadDocumentRequest,
+    AuthorizationRequest, CreateAssignmentSigner, CreateFieldBody, CreateSignerBody, CreateTagBody,
+    CreateTemplateRequest, DocumentStatsQuery, EstimateAssignmentCostBody, PkceChallenge,
+    SearchDocumentsRequest, SendTokenBody, TokenRequest, UpdateFieldBody, UpdateSignerBody,
+    UpdateTagBody, UploadDocumentRequest, scope,
 };
 use uuid::Uuid;
 
@@ -651,10 +652,9 @@ async fn assignment_lifecycle_covers_estimate_get_resend_and_reset() {
             .resend_to_signer(&doc.id, &assignment.id, &signer.id)
             .await?;
         let public_document = client.public().document(&doc.id).await?;
-        #[allow(deprecated)]
         client
             .public()
-            .send_token_legacy(&doc.id, &LegacySendTokenBody::email(&email))
+            .send_token(&doc.id, &SendTokenBody::email(&email))
             .await?;
 
         Ok((
@@ -748,4 +748,109 @@ xref\n0 5\n0000000000 65535 f \n\
 0000000211 00000 n \n\
 trailer<< /Size 5 /Root 1 0 R >>\nstartxref\n299\n%%EOF\n";
     PDF.to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// OAuth 2.1 discovery.
+//
+// These hit production rather than the sandbox: the OAuth endpoints are
+// served by production only, and the two discovery documents are
+// unauthenticated, so they need no credentials.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "hits the live production discovery endpoints"]
+async fn oauth_discovery_chain_resolves_the_authorization_endpoints() {
+    let client = Client::builder().build().expect("client builder");
+
+    let resource = client
+        .oauth()
+        .protected_resource_metadata()
+        .await
+        .expect(".well-known/oauth-protected-resource");
+    assert_eq!(resource.resource, "https://api.assinafy.com.br");
+    assert!(
+        resource
+            .authorization_servers
+            .iter()
+            .any(|url| url == "https://auth.assinafy.com.br"),
+        "unexpected authorization servers: {:?}",
+        resource.authorization_servers
+    );
+    for expected in [scope::DOCUMENTS_READ, scope::DOCUMENTS_WRITE, scope::OPENID] {
+        assert!(
+            resource.scopes_supported.iter().any(|s| s == expected),
+            "missing scope {expected} in {:?}",
+            resource.scopes_supported
+        );
+    }
+    assert!(
+        resource
+            .bearer_methods_supported
+            .iter()
+            .any(|m| m == "header")
+    );
+
+    let server = client
+        .oauth()
+        .authorization_server_metadata(&resource.authorization_servers[0])
+        .await
+        .expect(".well-known/oauth-authorization-server");
+    assert_eq!(server.issuer, "https://auth.assinafy.com.br");
+    assert!(server.token_endpoint.ends_with("/v1/oauth/token"));
+    assert!(
+        server
+            .code_challenge_methods_supported
+            .iter()
+            .any(|m| m == PkceChallenge::METHOD),
+        "S256 must be advertised: {:?}",
+        server.code_challenge_methods_supported
+    );
+    assert!(
+        server
+            .grant_types_supported
+            .iter()
+            .any(|g| g == "authorization_code")
+    );
+
+    // The authorization URL the SDK builds must target the advertised endpoint.
+    let pkce = PkceChallenge::generate().expect("pkce");
+    let url = AuthorizationRequest::new("rust-sdk-test", "https://app.example.invalid/cb", &pkce)
+        .scopes([scope::DOCUMENTS_READ])
+        .resource(&resource.resource)
+        .url(&server.authorization_endpoint)
+        .expect("authorization url");
+    assert!(url.starts_with(&server.authorization_endpoint));
+    assert!(url.contains("code_challenge_method=S256"));
+}
+
+#[tokio::test]
+#[ignore = "hits the live production token endpoint"]
+async fn oauth_token_endpoint_reports_rfc_6749_error_codes() {
+    let client = Client::builder().build().expect("client builder");
+    let pkce = PkceChallenge::generate().expect("pkce");
+
+    // An unknown client must fail, and the flat `{error, error_description}`
+    // body must survive as a structured error rather than an opaque one.
+    let error = client
+        .oauth()
+        .token(&TokenRequest::authorization_code(
+            "rust-sdk-nonexistent-client",
+            "rust-sdk-nonexistent-code",
+            "https://app.example.invalid/cb",
+            &pkce,
+        ))
+        .await
+        .expect_err("an unknown client must not receive a token");
+    let code = error
+        .oauth_error()
+        .unwrap_or_else(|| panic!("expected an OAuth error code, got {error:?}"));
+    assert!(
+        ["invalid_client", "invalid_grant"].contains(&code),
+        "unexpected OAuth error code {code} ({error:?})"
+    );
+    assert!(
+        !error.to_string().is_empty(),
+        "the error_description must reach Error::Display"
+    );
 }

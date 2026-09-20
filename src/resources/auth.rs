@@ -218,7 +218,7 @@ impl<'a> AuthApi<'a> {
     ///     "access_token": "example-redacted-access-token",
     ///     "user": {
     ///       "id": "acc_1234567890abcdef12345678",
-    ///       "name": "Bill Madeira",
+    ///       "name": "Maria Silva",
     ///       "email": "user@example.invalid",
     ///       "telephone": null,
     ///       "government_id": null,
@@ -230,7 +230,7 @@ impl<'a> AuthApi<'a> {
     ///     "accounts": [
     ///       {
     ///         "id": "acc_1234567890abcdef12345678",
-    ///         "name": "Feba Capital",
+    ///         "name": "Example Workspace",
     ///         "roles": ["owner"],
     ///         "is_delete_allowed": false,
     ///         "created_at": "2026-01-14T12:03:41Z"
@@ -264,7 +264,7 @@ impl<'a> AuthApi<'a> {
     ///     "access_token": "example-redacted-access-token",
     ///     "user": {
     ///       "id": "acc_1234567890abcdef12345678",
-    ///       "name": "Bill Madeira",
+    ///       "name": "Maria Silva",
     ///       "email": "user@example.invalid",
     ///       "telephone": null,
     ///       "government_id": null,
@@ -276,7 +276,7 @@ impl<'a> AuthApi<'a> {
     ///     "accounts": [
     ///       {
     ///         "id": "acc_1234567890abcdef12345678",
-    ///         "name": "Feba Capital",
+    ///         "name": "Example Workspace",
     ///         "roles": ["owner"],
     ///         "is_delete_allowed": false,
     ///         "created_at": "2026-01-14T12:03:41Z"

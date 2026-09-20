@@ -20,6 +20,7 @@ pub mod assignment;
 pub mod cost;
 pub mod document;
 pub mod field;
+pub mod oauth;
 pub mod signer;
 pub mod tag;
 pub mod template;
@@ -41,6 +42,7 @@ pub use document::{
     DocumentVerification, PublicDocument,
 };
 pub use field::{FieldDefinition, FieldType, FieldValidationResult};
+pub use oauth::{AuthorizationServerMetadata, ProtectedResourceMetadata, TokenResponse, UserInfo};
 pub use signer::{Signer, SignerSelf, SignerType};
 pub use tag::Tag;
 pub use template::{

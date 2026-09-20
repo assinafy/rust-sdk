@@ -79,6 +79,12 @@ impl Error {
     pub fn retry_after(&self) -> Option<u64> {
         self.api().and_then(|e| e.retry_after)
     }
+
+    /// Returns the RFC 6749 §5.2 error code when an OAuth endpoint rejected
+    /// the request. See [`ApiError::oauth_error`].
+    pub fn oauth_error(&self) -> Option<&str> {
+        self.api().and_then(ApiError::oauth_error)
+    }
 }
 
 /// Structured payload returned by the Assinafy API for non-2xx responses.
@@ -106,6 +112,32 @@ pub struct ApiError {
     /// `X-Rate-Limit-Reset` response header when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+}
+
+impl ApiError {
+    /// Returns the RFC 6749 §5.2 error code when the failure came from an
+    /// OAuth endpoint.
+    ///
+    /// Those endpoints answer with a flat `{ error, error_description }`
+    /// object rather than this API's envelope; the whole body is preserved in
+    /// [`data`](Self::data) and [`message`](Self::message) carries the
+    /// description. Branch on the code to tell a retryable condition
+    /// (`invalid_grant` — re-run the authorization flow) from a permanent one
+    /// (`invalid_client`, `unsupported_grant_type`).
+    ///
+    /// ```
+    /// # use assinafy::ApiError;
+    /// let error: ApiError = serde_json::from_value(serde_json::json!({
+    ///     "status": 400,
+    ///     "message": "The authorization code is invalid or expired.",
+    ///     "data": { "error": "invalid_grant" }
+    /// }))
+    /// .unwrap();
+    /// assert_eq!(error.oauth_error(), Some("invalid_grant"));
+    /// ```
+    pub fn oauth_error(&self) -> Option<&str> {
+        self.data.get("error")?.as_str()
+    }
 }
 
 #[cfg(test)]

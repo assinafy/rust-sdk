@@ -1,6 +1,6 @@
 [package]
 name = "assinafy"
-version = "2.0.1"
+version = "3.0.0"
 edition = "2024"
 rust-version = "1.86"
 description = "Idiomatic async Rust SDK for the Assinafy electronic signature API (https://api.assinafy.com.br/v1)."
@@ -9,7 +9,7 @@ repository = "https://github.com/assinafy/rust-sdk"
 homepage = "https://assinafy.com.br"
 documentation = "https://docs.rs/assinafy"
 readme = "README.md"
-exclude = ["/AUDIT.md"]
+exclude = ["/AUDIT.md", "/AGENTS.md", "/CLAUDE.md"]
 keywords = ["assinafy", "signature", "esign", "api", "sdk"]
 categories = ["api-bindings", "web-programming::http-client"]
 
@@ -22,6 +22,11 @@ native-tls = ["reqwest/native-tls"]
 
 [dependencies]
 bytes = "1"
+# OAuth 2.1 PKCE: `getrandom` for the code verifier's entropy and `sha2` for
+# its mandatory S256 challenge. Both are leaf crates with no further
+# dependencies of their own.
+getrandom = "0.4"
+sha2 = "0.11"
 # `default-features = false` only to opt out of reqwest's `default-tls`, which
 # this crate's own rustls-tls/native-tls features select instead. The rest of
 # reqwest's defaults (http2, system-proxy, charset) are re-enabled explicitly —

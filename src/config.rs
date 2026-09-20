@@ -41,13 +41,13 @@ impl BaseUrl {
     pub fn custom<S: AsRef<str>>(url: S) -> Result<Self> {
         let parsed = Url::parse(url.as_ref())
             .map_err(|e| Error::Config(format!("invalid custom base URL: {e}")))?;
-        validate_custom_url(&parsed)?;
+        validate_https_url(&parsed)?;
         Ok(BaseUrl::Custom(normalize_path_trailing_slash(parsed)))
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
         if let Self::Custom(url) = self {
-            validate_custom_url(url)?;
+            validate_https_url(url)?;
         }
         Ok(())
     }
@@ -80,7 +80,13 @@ fn normalize_path_trailing_slash(mut u: Url) -> Url {
     u
 }
 
-fn validate_custom_url(url: &Url) -> Result<()> {
+/// Validates a URL the SDK will send a request to: HTTPS (or loopback HTTP
+/// for local development), an absolute hierarchical URL with a host, no
+/// embedded credentials, and no query string or fragment.
+///
+/// Shared by [`BaseUrl::custom`] and the OAuth discovery endpoints, which
+/// take URLs published by the authorization server.
+pub(crate) fn validate_https_url(url: &Url) -> Result<()> {
     let loopback = match url.host() {
         Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
         Some(Host::Ipv4(address)) => address.is_loopback(),
@@ -89,22 +95,22 @@ fn validate_custom_url(url: &Url) -> Result<()> {
     };
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
         return Err(Error::Config(
-            "custom base URL must use HTTPS (HTTP is allowed only for loopback hosts)".into(),
+            "URL must use HTTPS (HTTP is allowed only for loopback hosts)".into(),
         ));
     }
     if url.host_str().is_none() || url.cannot_be_a_base() {
         return Err(Error::Config(
-            "custom base URL must be an absolute hierarchical URL with a host".into(),
+            "URL must be an absolute hierarchical URL with a host".into(),
         ));
     }
     if !url.username().is_empty() || url.password().is_some() {
         return Err(Error::Config(
-            "custom base URL must not contain embedded credentials".into(),
+            "URL must not contain embedded credentials".into(),
         ));
     }
     if url.query().is_some() || url.fragment().is_some() {
         return Err(Error::Config(
-            "custom base URL must not contain a query string or fragment".into(),
+            "URL must not contain a query string or fragment".into(),
         ));
     }
     Ok(())

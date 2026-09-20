@@ -5,8 +5,8 @@
 //!
 //! The SDK is organised around a single [`Client`] that exposes a resource
 //! module per API surface — accounts, signers, documents, assignments,
-//! templates, tags, fields, webhooks, activities, API keys, and authentication
-//! helpers. Every call is `async`, returns a strongly-typed [`Result`], and
+//! templates, tags, fields, webhooks, activities, API keys, OAuth, and
+//! authentication helpers. Every call is `async`, returns a strongly-typed [`Result`], and
 //! uses the same response envelope the API itself uses
 //! (`{ status, message, data }`).
 //!
@@ -43,14 +43,25 @@
 //!
 //! * [`Auth::ApiKey`] — sent as the `X-Api-Key` header (recommended for
 //!   server-to-server use).
-//! * [`Auth::Bearer`] — sent as `Authorization: Bearer <token>` (for tokens
-//!   obtained from [`AuthApi::login`](crate::resources::AuthApi::login)).
+//! * [`Auth::Bearer`] — sent as `Authorization: Bearer <token>`, for tokens
+//!   obtained from [`AuthApi::login`](crate::resources::AuthApi::login) or
+//!   from the OAuth flow below.
 //! * [`Auth::AccessToken`] — sent as the documented `?access-token=...` query
 //!   parameter when that legacy form is required.
 //! * [`Auth::AccessCode`] — sent as the `?signer-access-code=...` query
 //!   parameter for signer-facing endpoints.
 //!
 //! Switch credentials at runtime with [`Client::with_auth`].
+//!
+//! ### OAuth 2.1
+//!
+//! An application that acts **in a user's workspace with that user's
+//! permission** — rather than as the workspace itself — uses the OAuth 2.1
+//! authorization-code flow with mandatory PKCE. The resulting access token
+//! carries only the scopes the user approved and is used as [`Auth::Bearer`].
+//! [`OAuthApi`](crate::resources::OAuthApi) covers discovery, the
+//! authorization URL, the code exchange, refresh, revocation and OpenID
+//! Connect userinfo. These endpoints are served by production only.
 //!
 //! ## Environments
 //!
@@ -84,12 +95,17 @@
 
 #![deny(missing_docs)]
 
-// Compile-check every code block in the README as a doctest without duplicating
-// the crate-level documentation above. `cfg(doctest)` keeps this out of the
-// build and the rendered docs.
+// Compile-check every code block in both READMEs as doctests without
+// duplicating the crate-level documentation above. `cfg(doctest)` keeps these
+// out of the build and the rendered docs. Including the English translation
+// too means a drifting example fails CI instead of shipping.
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.en.md")]
+struct EnglishReadmeDoctests;
 
 mod auth;
 mod client;

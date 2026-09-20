@@ -8,46 +8,33 @@ use crate::http::HttpClient;
 use crate::models::PublicDocument;
 
 /// Body for `PUT /public/documents/{document_id}/send-token`.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct SendTokenBody {
-    /// Email address that should receive the token.
-    pub email: String,
-}
-
-impl SendTokenBody {
-    /// Build an email token request.
-    pub fn new<S: Into<String>>(email: S) -> Self {
-        Self {
-            email: email.into(),
-        }
-    }
-
-    /// Build an email token request.
-    pub fn email<S: Into<String>>(email: S) -> Self {
-        Self::new(email)
-    }
-}
-
-/// Compatibility body for
-/// `PUT /public/documents/{document_id}/send-token`.
 ///
-/// Use [`SendTokenBody`] unless the target deployment requires an explicit
-/// recipient and channel:
+/// Both fields are required by the live API. The published OpenAPI document
+/// describes a single `email` field instead; that shape is rejected with
+/// `400 O atributo "channel" é obrigatório.` on production and sandbox alike,
+/// so the SDK follows the live contract.
 ///
-/// ```json
-/// { "recipient": "user@example.invalid", "channel": "email" }
 /// ```
-#[derive(Clone, Serialize, Deserialize)]
-pub struct LegacySendTokenBody {
-    /// Address or phone number that should receive the token.
+/// # use assinafy::resources::SendTokenBody;
+/// assert_eq!(
+///     serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap(),
+///     serde_json::json!({ "recipient": "user@example.invalid", "channel": "email" })
+/// );
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendTokenBody {
+    /// Address or phone number that should receive the token. It must belong
+    /// to a signer on the document.
     pub recipient: String,
-    /// Delivery channel understood by the compatibility endpoint.
+    /// Delivery channel — `"email"` or `"whatsapp"`.
     pub channel: String,
 }
 
-impl LegacySendTokenBody {
-    /// Build a compatibility token request for an explicit channel.
-    #[deprecated(note = "compatibility only; use SendTokenBody")]
+impl SendTokenBody {
+    /// Build a request for an explicit recipient and channel.
+    ///
+    /// Prefer [`email`](Self::email) or [`whatsapp`](Self::whatsapp) unless
+    /// the channel is only known at runtime.
     pub fn new<R: Into<String>, C: Into<String>>(recipient: R, channel: C) -> Self {
         Self {
             recipient: recipient.into(),
@@ -55,13 +42,14 @@ impl LegacySendTokenBody {
         }
     }
 
-    /// Build a compatibility email-token request.
-    #[deprecated(note = "compatibility only; use SendTokenBody::email")]
+    /// Deliver the token to an email address.
     pub fn email<S: Into<String>>(recipient: S) -> Self {
-        Self {
-            recipient: recipient.into(),
-            channel: "email".to_owned(),
-        }
+        Self::new(recipient, "email")
+    }
+
+    /// Deliver the token over WhatsApp, to a phone number in E.164 format.
+    pub fn whatsapp<S: Into<String>>(recipient: S) -> Self {
+        Self::new(recipient, "whatsapp")
     }
 }
 
@@ -138,15 +126,16 @@ impl<'a> PublicApi<'a> {
         self.http.send_envelope(req).await
     }
 
-    /// Send a signer access token to the signer by email.
+    /// Send a signer access token to the signer, by email or WhatsApp.
     ///
-    /// `PUT /public/documents/{document_id}/send-token`. The email address must
-    /// belong to a signer on the document.
+    /// `PUT /public/documents/{document_id}/send-token`. Requires no
+    /// authentication. The recipient must belong to a signer on the document;
+    /// an unknown document answers `404 Documento não encontrado.`
     ///
     /// # Request payload
     ///
     /// ```json
-    /// { "email": "user@example.invalid" }
+    /// { "recipient": "user@example.invalid", "channel": "email" }
     /// ```
     ///
     /// # Response payload
@@ -159,43 +148,9 @@ impl<'a> PublicApi<'a> {
         document_id: S,
         body: &SendTokenBody,
     ) -> Result<()> {
-        self.send_token_payload(document_id.as_ref(), body).await
-    }
-
-    /// Send a signer access token using the compatibility payload.
-    ///
-    /// `PUT /public/documents/{document_id}/send-token`. This compatibility
-    /// method requires no authentication and sends the recipient/channel
-    /// request shape. Prefer [`Self::send_token`] unless it is required.
-    ///
-    /// # Request payload
-    ///
-    /// ```json
-    /// { "recipient": "user@example.invalid", "channel": "email" }
-    /// ```
-    ///
-    /// # Response payload
-    ///
-    /// ```json
-    /// { "status": 200, "message": "", "data": [] }
-    /// ```
-    #[deprecated(note = "compatibility only; use PublicApi::send_token")]
-    pub async fn send_token_legacy<S: AsRef<str>>(
-        &self,
-        document_id: S,
-        body: &LegacySendTokenBody,
-    ) -> Result<()> {
-        self.send_token_payload(document_id.as_ref(), body).await
-    }
-
-    async fn send_token_payload<T: Serialize + ?Sized>(
-        &self,
-        document_id: &str,
-        body: &T,
-    ) -> Result<()> {
         let path = self
             .http
-            .path(&["public", "documents", document_id, "send-token"])?;
+            .path(&["public", "documents", document_id.as_ref(), "send-token"])?;
         let req = self.http.request_public(Method::PUT, &path)?.json(body);
         self.http.send_no_content(req).await
     }
@@ -203,26 +158,20 @@ impl<'a> PublicApi<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LegacySendTokenBody, SendTokenBody};
+    use super::SendTokenBody;
 
     #[test]
-    #[allow(deprecated)]
-    fn production_and_legacy_send_token_bodies_stay_distinct() {
-        let production =
-            serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap();
-        let legacy =
-            serde_json::to_value(LegacySendTokenBody::email("user@example.invalid")).unwrap();
-
-        assert_eq!(
-            production,
-            serde_json::json!({ "email": "user@example.invalid" })
-        );
-        assert_eq!(
-            legacy,
-            serde_json::json!({
-                "recipient": "user@example.invalid",
-                "channel": "email"
-            })
-        );
+    fn send_token_bodies_carry_the_channel_the_api_requires() {
+        // Omitting `channel` is what the published spec describes, and what
+        // the live API rejects with `400 O atributo "channel" é obrigatório.`
+        for (body, expected_channel) in [
+            (SendTokenBody::email("user@example.invalid"), "email"),
+            (SendTokenBody::whatsapp("+5511999999999"), "whatsapp"),
+        ] {
+            let json = serde_json::to_value(&body).unwrap();
+            assert_eq!(json["channel"], expected_channel);
+            assert_eq!(json["recipient"], body.recipient);
+            assert_eq!(json.as_object().unwrap().len(), 2);
+        }
     }
 }
