@@ -1,12 +1,13 @@
-//! End-to-end integration tests against the Assinafy sandbox.
+//! End-to-end integration tests against a live Assinafy deployment.
 //!
 //! These tests are `#[ignore]` by default. Run them with:
 //!
 //! ```bash
-//! ASSINAFY_API_KEY=<sandbox key> ASSINAFY_ACCOUNT_ID=<sandbox account> \
+//! ASSINAFY_BASE_URL=<https base url> \
+//! ASSINAFY_API_KEY=<key> ASSINAFY_ACCOUNT_ID=<account> \
 //! ASSINAFY_TEST_EMAIL_PRIMARY=<test inbox> \
 //! ASSINAFY_TEST_EMAIL_SECONDARY=<test inbox> \
-//!   cargo test --test sandbox -- --ignored --test-threads=1
+//!   cargo test --test live -- --ignored --test-threads=1
 //! ```
 
 mod common;
@@ -15,9 +16,9 @@ use assinafy::Client;
 use assinafy::models::{AssignmentMethod, NotificationMethod, VerificationMethod};
 use assinafy::resources::{
     AuthorizationRequest, CreateAssignmentSigner, CreateFieldBody, CreateSignerBody, CreateTagBody,
-    CreateTemplateRequest, DocumentStatsQuery, EstimateAssignmentCostBody, PkceChallenge,
-    SearchDocumentsRequest, SendTokenBody, TokenRequest, UpdateFieldBody, UpdateSignerBody,
-    UpdateTagBody, UploadDocumentRequest, scope,
+    CreateTemplateRequest, EstimateAssignmentCostBody, PkceChallenge, SearchDocumentsRequest,
+    SendTokenBody, TokenRequest, UpdateFieldBody, UpdateSignerBody, UpdateTagBody,
+    UploadDocumentRequest, scope,
 };
 use uuid::Uuid;
 
@@ -40,9 +41,9 @@ fn unique_email(variable: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn document_statuses_endpoint_returns_known_codes() {
-    let (client, _) = sandbox_or_skip!();
+    let (client, _) = live_or_skip!();
     let statuses = client
         .documents()
         .statuses()
@@ -64,9 +65,9 @@ async fn document_statuses_endpoint_returns_known_codes() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn signers_full_lifecycle() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let signers = client.signers(&account_id);
 
     let full_name = unique("Rust SDK Signer");
@@ -113,9 +114,9 @@ async fn signers_full_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn tags_full_lifecycle() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let tags = client.tags(&account_id);
 
     let name = unique("rust-sdk-tag");
@@ -140,9 +141,9 @@ async fn tags_full_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn read_only_reference_endpoints_are_available() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
 
     let field_types = client
         .fields(&account_id)
@@ -198,9 +199,9 @@ async fn read_only_reference_endpoints_are_available() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn fields_full_lifecycle() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let fields = client.fields(&account_id);
 
     let name = unique("Rust SDK Field");
@@ -241,9 +242,9 @@ async fn fields_full_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn list_signers_returns_pagination_metadata() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let page = client
         .signers(&account_id)
         .list()
@@ -260,9 +261,9 @@ async fn list_signers_returns_pagination_metadata() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn list_documents_does_not_error_on_empty_account() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     use assinafy::resources::ListDocumentsRequest;
     let _page = client
         .documents()
@@ -272,9 +273,9 @@ async fn list_documents_does_not_error_on_empty_account() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn missing_signer_returns_404_api_error() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let err = client
         .signers(&account_id)
         .get("definitely-not-a-real-id")
@@ -284,9 +285,9 @@ async fn missing_signer_returns_404_api_error() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn upload_document_then_delete() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let pdf = minimal_pdf();
     let upload = assinafy::resources::UploadDocumentRequest::from_bytes(
         format!("{}.pdf", unique("rust-sdk-doc")),
@@ -312,9 +313,9 @@ async fn upload_document_then_delete() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn verify_unknown_hash_returns_invalid_typed_result() {
-    let (client, _) = sandbox_or_skip!();
+    let (client, _) = live_or_skip!();
     let result = client
         .documents()
         .verify("INVALIDHASHEXAMPLE")
@@ -335,17 +336,17 @@ async fn verify_unknown_hash_returns_invalid_typed_result() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn public_document_info_is_typed() {
     use assinafy::resources::ListDocumentsRequest;
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let page = client
         .documents()
         .list(&account_id, ListDocumentsRequest::default().per_page(1))
         .await
         .expect("list documents");
     let Some(doc) = page.data.first() else {
-        eprintln!("skipping: no documents in sandbox account to query publicly");
+        eprintln!("skipping: no documents in the account to query publicly");
         return;
     };
     let public = client
@@ -358,9 +359,9 @@ async fn public_document_info_is_typed() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn accounts_list_get_and_theme() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
 
     let accounts = client.accounts_api().list().await.expect("list accounts");
     assert!(
@@ -385,9 +386,9 @@ async fn accounts_list_get_and_theme() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn assignments_list_requires_account_context() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     // The SDK always supplies the required `accountId` query param, so this
     // must not 400 with "account context required".
     let _page = client
@@ -400,9 +401,9 @@ async fn assignments_list_requires_account_context() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn documents_rename_and_search() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let docs = client.documents();
 
     let upload =
@@ -429,12 +430,12 @@ async fn documents_rename_and_search() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn templates_create_get_delete() {
     use assinafy::models::TemplateStatus;
     use std::time::Duration;
 
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let templates = client.templates(&account_id);
 
     let file =
@@ -470,42 +471,17 @@ async fn templates_create_get_delete() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn users_self_returns_profile() {
-    let (client, _account_id) = sandbox_or_skip!();
+    let (client, _account_id) = live_or_skip!();
     let me = client.users().me().await.expect("users/self");
     assert!(!me.email.is_empty(), "authenticated user has an email");
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
-async fn production_only_stats_and_preferences_are_absent_from_sandbox() {
-    let (client, account_id) = sandbox_or_skip!();
-    let query = DocumentStatsQuery::monthly();
-    let errors = [
-        client
-            .account(&account_id)
-            .stats(&query)
-            .await
-            .expect_err("account stats should be absent from sandbox"),
-        client
-            .users()
-            .stats(&query)
-            .await
-            .expect_err("user stats should be absent from sandbox"),
-        client
-            .users()
-            .notification_preferences()
-            .await
-            .expect_err("notification preferences should be absent from sandbox"),
-    ];
-    assert!(errors.iter().all(|error| error.status() == Some(404)));
-}
-
-#[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn document_tags_attach_by_name_and_detach_by_id() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let docs = client.documents();
     let tags = client.tags(&account_id);
 
@@ -567,11 +543,11 @@ async fn document_tags_attach_by_name_and_detach_by_id() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn download_artifact_returns_raw_bytes_and_redirects_thumbnail() {
     use assinafy::models::ArtifactName;
 
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let docs = client.documents();
 
     let upload =
@@ -597,9 +573,9 @@ async fn download_artifact_returns_raw_bytes_and_redirects_thumbnail() {
 }
 
 #[tokio::test]
-#[ignore = "hits live sandbox"]
+#[ignore = "hits a live deployment"]
 async fn assignment_lifecycle_covers_estimate_get_resend_and_reset() {
-    let (client, account_id) = sandbox_or_skip!();
+    let (client, account_id) = live_or_skip!();
     let docs = client.documents();
     let signers = client.signers(&account_id);
     let assignments = client.assignments();
@@ -635,7 +611,7 @@ async fn assignment_lifecycle_covers_estimate_get_resend_and_reset() {
             .verification_method(VerificationMethod::Email)
             .notification_methods(vec![NotificationMethod::Email])],
     )
-    .message("Rust SDK sandbox contract test");
+    .message("Rust SDK contract test");
 
     const EXPIRES_AT: &str = "2099-12-31T23:59:59Z";
     let workflow: assinafy::Result<_> = async {
@@ -753,7 +729,7 @@ trailer<< /Size 5 /Root 1 0 R >>\nstartxref\n299\n%%EOF\n";
 // ---------------------------------------------------------------------------
 // OAuth 2.1 discovery.
 //
-// These hit production rather than the sandbox: the OAuth endpoints are
+// These always hit production: the OAuth endpoints are
 // served by production only, and the two discovery documents are
 // unauthenticated, so they need no credentials.
 // ---------------------------------------------------------------------------

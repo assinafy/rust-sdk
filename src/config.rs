@@ -8,10 +8,7 @@ use crate::error::{Error, Result};
 
 /// Base URL used for API requests.
 ///
-/// Two presets are provided:
-///
-/// * [`BaseUrl::Production`] — `https://api.assinafy.com.br/v1`
-/// * [`BaseUrl::Sandbox`] — `https://sandbox.assinafy.com.br/v1`
+/// [`BaseUrl::Production`] — `https://api.assinafy.com.br/v1` — is the default.
 ///
 /// Use [`BaseUrl::custom`] to point at any other deployment. Custom URLs must
 /// use HTTPS; loopback HTTP is accepted for local development and tests.
@@ -20,8 +17,6 @@ pub enum BaseUrl {
     /// `https://api.assinafy.com.br/v1`
     #[default]
     Production,
-    /// `https://sandbox.assinafy.com.br/v1`
-    Sandbox,
     /// User-supplied base URL.
     Custom(Url),
 }
@@ -29,8 +24,6 @@ pub enum BaseUrl {
 impl BaseUrl {
     /// Production base URL.
     pub const PRODUCTION: &'static str = "https://api.assinafy.com.br/v1";
-    /// Sandbox base URL.
-    pub const SANDBOX: &'static str = "https://sandbox.assinafy.com.br/v1";
 
     /// Parse a custom base URL. Its path is normalized to end with `/` (if
     /// missing) so that relative joins behave consistently.
@@ -57,7 +50,6 @@ impl BaseUrl {
     pub fn as_url(&self) -> Url {
         let raw = match self {
             BaseUrl::Production => Self::PRODUCTION,
-            BaseUrl::Sandbox => Self::SANDBOX,
             // Normalize here too, not just in `custom()`: `Custom` is a
             // public tuple variant and callers can build one directly with
             // an arbitrary `Url` that skips `custom()` entirely.
@@ -120,7 +112,6 @@ impl fmt::Display for BaseUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BaseUrl::Production => f.write_str(Self::PRODUCTION),
-            BaseUrl::Sandbox => f.write_str(Self::SANDBOX),
             BaseUrl::Custom(u) => write!(f, "{}", u.as_str().trim_end_matches('/')),
         }
     }

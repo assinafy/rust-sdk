@@ -200,7 +200,7 @@ impl<'a> UsersApi<'a> {
     /// `GET /users/self/stats`. Monthly queries return the last 12 months,
     /// most recent first. Daily queries return every day in the requested
     /// month. The API zero-fills both series. This endpoint is available on
-    /// production and is not exposed by the sandbox.
+    /// production only.
     ///
     /// # Request parameters
     ///
@@ -240,7 +240,7 @@ impl<'a> UsersApi<'a> {
     ///
     /// `GET /users/self/notification-preferences`. All keys are always
     /// returned; each defaults to `true` until changed. This endpoint is
-    /// available on production and is not exposed by the sandbox.
+    /// available on production only.
     ///
     /// # Response payload
     ///
@@ -271,7 +271,7 @@ impl<'a> UsersApi<'a> {
     /// [`Error::Config`]; the API likewise rejects empty objects, unknown keys,
     /// and non-boolean values. The full updated preference map is returned.
     /// This endpoint is available on production and is not exposed by the
-    /// sandbox.
+    /// production only.
     ///
     /// # Request payload
     ///
@@ -331,17 +331,17 @@ mod tests {
     }
 
     #[test]
-    fn users_self_accepts_production_and_legacy_sandbox_data_shapes() {
+    fn users_self_accepts_production_and_legacy_data_shapes() {
         let production: SelfUserResponse =
             serde_json::from_value(profile_json("production-user")).unwrap();
         assert_eq!(production.into_profile().id, "production-user");
 
         let legacy: SelfUserResponse = serde_json::from_value(serde_json::json!({
-            "user": profile_json("sandbox-user"),
+            "user": profile_json("legacy-user"),
             "accounts": []
         }))
         .unwrap();
-        assert_eq!(legacy.into_profile().id, "sandbox-user");
+        assert_eq!(legacy.into_profile().id, "legacy-user");
     }
 
     #[test]

@@ -13,12 +13,12 @@ use assinafy::{Auth, BaseUrl, Client, Envelope};
 
 #[test]
 fn base_url_join_appends_trailing_slash() {
-    let u = BaseUrl::Sandbox.as_url();
+    let u = BaseUrl::Production.as_url();
     assert!(u.as_str().ends_with('/'));
     let joined = u.join("accounts/abc/signers").unwrap();
     assert_eq!(
         joined.as_str(),
-        "https://sandbox.assinafy.com.br/v1/accounts/abc/signers"
+        "https://api.assinafy.com.br/v1/accounts/abc/signers"
     );
 }
 
@@ -154,13 +154,13 @@ fn envelope_decodes_signer_payload() {
 fn client_builder_carries_auth_and_base_url() {
     let client = Client::builder()
         .api_key("k")
-        .sandbox()
+        .base_url(BaseUrl::custom("https://api.example.invalid/v1").unwrap())
         .user_agent("ci/1.0")
         .build()
         .unwrap();
     assert_eq!(
         client.base_url().as_str(),
-        "https://sandbox.assinafy.com.br/v1/"
+        "https://api.example.invalid/v1/"
     );
     assert!(matches!(client.auth(), Auth::ApiKey(k) if k == "k"));
 }
@@ -299,7 +299,7 @@ fn api_key_response_accepts_null_envelope_data() {
 fn public_send_token_body_matches_the_live_contract() {
     // The published spec describes a lone `email` field; the live API rejects
     // that with `400 O atributo "channel" é obrigatório.` on both production
-    // and sandbox, so the SDK sends `{recipient, channel}`.
+    // across deployments, so the SDK sends `{recipient, channel}`.
     let body = serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap();
     assert_eq!(
         body,

@@ -20,7 +20,7 @@ async fn main() -> assinafy::Result<()> {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let client = Client::builder().api_key(api_key).sandbox().build()?;
+    let client = Client::builder().api_key(api_key).build()?;
     let body = CreateAssignmentBody::new(AssignmentMethod::Virtual, signer_ids)
         .message("Please sign this document.");
 

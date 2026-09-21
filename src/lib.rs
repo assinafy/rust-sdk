@@ -65,14 +65,15 @@
 //!
 //! ## Environments
 //!
-//! Both production and sandbox base URLs are first-class:
+//! Requests go to production by default. Point at another deployment with
+//! [`BaseUrl::custom`](BaseUrl::custom):
 //!
 //! ```
-//! use assinafy::Client;
+//! use assinafy::{BaseUrl, Client};
 //!
-//! let sandbox = Client::builder()
+//! let client = Client::builder()
 //!     .api_key("test-key")
-//!     .sandbox()
+//!     .base_url(BaseUrl::custom("https://api.example.invalid/v1").unwrap())
 //!     .build()
 //!     .unwrap();
 //! ```

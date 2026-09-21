@@ -19,7 +19,7 @@ async fn main() -> assinafy::Result<()> {
         .expect("usage: upload_document <path-to-pdf>")
         .into();
 
-    let client = Client::builder().api_key(api_key).sandbox().build()?;
+    let client = Client::builder().api_key(api_key).build()?;
     let upload = UploadDocumentRequest::from_path(&path).await?;
     let doc = client.documents().upload(&account_id, upload).await?;
 

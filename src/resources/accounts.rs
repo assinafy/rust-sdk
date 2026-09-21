@@ -390,7 +390,7 @@ impl<'a> AccountApi<'a> {
     /// `GET /accounts/{account_id}/stats`. Monthly queries return the last 12
     /// months, most recent first. Daily queries return every day in the
     /// requested month. The API zero-fills both series. This endpoint is
-    /// available on production and is not exposed by the sandbox.
+    /// available on production only.
     ///
     /// # Request parameters
     ///

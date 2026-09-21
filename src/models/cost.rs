@@ -53,7 +53,7 @@ pub struct CostEstimate {
     /// Total credits to charge.
     #[serde(default)]
     pub total_credits: f64,
-    /// Legacy sandbox name for `total_credits`.
+    /// Legacy name for `total_credits`.
     #[serde(default)]
     pub total: f64,
     /// Itemised breakdown.
@@ -68,7 +68,7 @@ pub struct CostEstimate {
     /// Whether the account has the resources to proceed.
     #[serde(default)]
     pub has_sufficient_resources: bool,
-    /// Legacy sandbox name for `has_sufficient_resources`.
+    /// Legacy name for `has_sufficient_resources`.
     #[serde(default)]
     pub has_sufficient_credits: bool,
     /// Reason the operation is blocked, when applicable.

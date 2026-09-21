@@ -59,7 +59,6 @@ use assinafy::Client;
 async fn main() -> assinafy::Result<()> {
     let client = Client::builder()
         .api_key(std::env::var("ASSINAFY_API_KEY").unwrap())
-        .sandbox() // omita para produção
         .build()?;
 
     let signatarios = client
@@ -276,9 +275,8 @@ async fn trocar(client_id: &str, refresh_token: &str) -> assinafy::Result<()> {
 }
 ```
 
-> Os endpoints OAuth existem **somente em produção**. No sandbox eles respondem
-> `404 Página não encontrada.`, e o host do sandbox não publica
-> `/.well-known/oauth-protected-resource`.
+> Os endpoints OAuth existem **somente em produção**. Outras implantações respondem
+> `404 Página não encontrada.` e não publicam `/.well-known/oauth-protected-resource`.
 
 ### Código de acesso do signatário
 
@@ -298,10 +296,7 @@ fn como_signatario(client: &Client) -> Client {
 | Ambiente | Base URL | Builder |
 | --- | --- | --- |
 | Produção | `https://api.assinafy.com.br/v1` | padrão, ou `.production()` |
-| Sandbox | `https://sandbox.assinafy.com.br/v1` | `.sandbox()` |
-
-O sandbox é gratuito e espelha a produção para testar a integração de ponta a ponta, com duas
-exceções: as rotas de certificado digital e os endpoints OAuth existem apenas em produção.
+| Outra implantação | qualquer URL HTTPS | `.base_url(BaseUrl::custom(...)?)` |
 
 `BaseUrl::custom` aponta para qualquer outro deployment. URLs personalizadas exigem HTTPS
 (HTTP só para loopback), sem credenciais embutidas, query string ou fragmento.
@@ -343,7 +338,6 @@ async fn assinar_contrato() -> assinafy::Result<()> {
     let conta = std::env::var("ASSINAFY_ACCOUNT_ID").unwrap();
     let client = Client::builder()
         .api_key(std::env::var("ASSINAFY_API_KEY").unwrap())
-        .sandbox() // remova para produção
         .build()?;
 
     // 1. O signatário precisa de e-mail ou WhatsApp para ser notificado.
@@ -517,7 +511,7 @@ POST /v1/signers/certificate/start     → data.token   (token da operação Web
 POST /v1/signers/certificate/complete  → data.signerName
 ```
 
-> Essas duas rotas são extensões implantadas **somente em produção**: o sandbox não as expõe e
+> Essas duas rotas são extensões implantadas **somente em produção**: outras implantações não as expõem e
 > elas não constam do documento OpenAPI publicado, portanto o SDK não as envolve.
 
 Concluído o fluxo, baixar o artefato `pades` devolve a assinatura PAdES qualificada.
@@ -874,11 +868,12 @@ Exemplos executáveis ficam em [`examples/`](examples).
 ## Testes de integração
 
 ```bash
-export ASSINAFY_API_KEY=<chave-do-sandbox>
-export ASSINAFY_ACCOUNT_ID=<conta-do-sandbox>
+export ASSINAFY_BASE_URL=<url-https-da-implantacao>
+export ASSINAFY_API_KEY=<chave>
+export ASSINAFY_ACCOUNT_ID=<conta>
 export ASSINAFY_TEST_EMAIL_PRIMARY=<caixa-de-teste>
 export ASSINAFY_TEST_EMAIL_SECONDARY=<caixa-de-teste-secundária>
-cargo test --test sandbox -- --ignored --test-threads=1
+cargo test --test live -- --ignored --test-threads=1
 ```
 
 O `--ignored` é obrigatório porque esses testes chamam a API de verdade, e `--test-threads=1`
@@ -889,7 +884,7 @@ Os testes de descoberta OAuth dispensam credenciais — eles usam os endpoints p
 produção:
 
 ```bash
-cargo test --test sandbox -- --ignored oauth
+cargo test --test live -- --ignored oauth
 ```
 
 ## Licença

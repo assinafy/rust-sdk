@@ -372,7 +372,7 @@ impl<'a> ListAssignmentsRequest<'a> {
     /// Execute the request.
     ///
     /// `GET /assignments` with optional `page` and `per-page` query
-    /// parameters. The SDK also sends the sandbox-compatible `accountId`
+    /// parameters. The SDK also sends the legacy `accountId`
     /// parameter when the request came from [`AssignmentsApi::list`].
     ///
     /// # Response payload
@@ -422,11 +422,11 @@ impl<'a> AssignmentsApi<'a> {
         Self { http }
     }
 
-    /// List assignments using the sandbox-compatible account context.
+    /// List assignments using the legacy account context.
     ///
     /// `GET /assignments?accountId={account_id}`. Returns a builder that adds
     /// optional pagination and sends the request. The `accountId` query
-    /// parameter is required by the sandbox API. Production callers should
+    /// parameter is required by some deployments. Production callers should
     /// prefer [`Self::list_current`], which follows the published contract.
     ///
     /// [`ListAssignmentsRequest::send`] documents the response payload and
@@ -490,7 +490,7 @@ impl<'a> AssignmentsApi<'a> {
     ///     "display_settings": [], "value": null, "completed": false } ],
     ///   "summary": { "signer_count": 1, "completed_count": 0, "signers": [] },
     ///   "signing_urls": [ { "signer_id": "19e6b92e7895332ed9708535d8c",
-    ///     "url": "https://app-sandbox.assinafy.com.br/sign/103033c950d865a248a11c5cf96c" } ] }
+    ///     "url": "https://app.assinafy.com.br/sign/103033c950d865a248a11c5cf96c" } ] }
     /// }
     /// ```
     pub async fn create<S: AsRef<str>>(
@@ -687,7 +687,7 @@ impl<'a> AssignmentsApi<'a> {
     ///     "header": "Documento para assinatura: Contrato de Servico",
     ///     "body": "Olá, você tem um documento para assinar.",
     ///     "buttons": [ { "text": "Abrir documento",
-    ///       "url": "https://app-sandbox.assinafy.com.br/sign/103033c950d865a248a11c5cf96c" } ],
+    ///       "url": "https://app.assinafy.com.br/sign/103033c950d865a248a11c5cf96c" } ],
     ///     "phone_number": "+5511999990001", "signer_id": "103033c9cd9426bbbb78eccd2c79" } ]
     /// }
     /// ```

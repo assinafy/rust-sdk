@@ -12,8 +12,7 @@
 //!   cargo run --example oauth_flow
 //! ```
 //!
-//! The OAuth endpoints are served by production only, so this example does
-//! not call `.sandbox()`.
+//! The OAuth endpoints are served by production, which is the default base URL.
 
 use assinafy::resources::{AuthorizationRequest, PkceChallenge, TokenRequest, scope};
 use assinafy::{Auth, Client};

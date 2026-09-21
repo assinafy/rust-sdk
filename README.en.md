@@ -59,7 +59,6 @@ use assinafy::Client;
 async fn main() -> assinafy::Result<()> {
     let client = Client::builder()
         .api_key(std::env::var("ASSINAFY_API_KEY").unwrap())
-        .sandbox() // omit for production
         .build()?;
 
     let signers = client
@@ -276,9 +275,8 @@ async fn exchange(client_id: &str, refresh_token: &str) -> assinafy::Result<()> 
 }
 ```
 
-> The OAuth endpoints exist in **production only**. In the sandbox they answer
-> `404 Página não encontrada.`, and the sandbox host does not publish
-> `/.well-known/oauth-protected-resource`.
+> The OAuth endpoints exist in **production only**. Other deployments answer
+> `404 Página não encontrada.` and do not publish `/.well-known/oauth-protected-resource`.
 
 ### Signer access code
 
@@ -298,10 +296,8 @@ fn as_signer(client: &Client) -> Client {
 | Environment | Base URL | Builder |
 | --- | --- | --- |
 | Production | `https://api.assinafy.com.br/v1` | default, or `.production()` |
-| Sandbox | `https://sandbox.assinafy.com.br/v1` | `.sandbox()` |
+| Other deployment | any HTTPS URL | `.base_url(BaseUrl::custom(...)?)` |
 
-The sandbox is free and mirrors production for end-to-end integration testing, with two
-exceptions: the digital-certificate routes and the OAuth endpoints exist in production only.
 
 `BaseUrl::custom` points at any other deployment. Custom URLs must use HTTPS (HTTP only for
 loopback), with no embedded credentials, query string or fragment.
@@ -343,7 +339,6 @@ async fn sign_a_contract() -> assinafy::Result<()> {
     let account = std::env::var("ASSINAFY_ACCOUNT_ID").unwrap();
     let client = Client::builder()
         .api_key(std::env::var("ASSINAFY_API_KEY").unwrap())
-        .sandbox() // remove for production
         .build()?;
 
     // 1. A signer needs an email address or a WhatsApp number to be notified.
@@ -517,7 +512,7 @@ POST /v1/signers/certificate/start     → data.token   (Web PKI operation token
 POST /v1/signers/certificate/complete  → data.signerName
 ```
 
-> These two routes are extensions deployed in **production only**: the sandbox does not expose
+> These two routes are extensions deployed in **production only**: other deployments do not expose
 > them and they are absent from the published OpenAPI document, so the SDK does not wrap them.
 
 Once the flow completes, downloading the `pades` artifact returns the qualified PAdES signature.
@@ -874,11 +869,12 @@ shapes. Runnable examples live in [`examples/`](examples).
 ## Integration tests
 
 ```bash
-export ASSINAFY_API_KEY=<sandbox-key>
-export ASSINAFY_ACCOUNT_ID=<sandbox-account>
+export ASSINAFY_BASE_URL=<https base url>
+export ASSINAFY_API_KEY=<key>
+export ASSINAFY_ACCOUNT_ID=<account>
 export ASSINAFY_TEST_EMAIL_PRIMARY=<notification-test-inbox>
 export ASSINAFY_TEST_EMAIL_SECONDARY=<secondary-test-inbox>
-cargo test --test sandbox -- --ignored --test-threads=1
+cargo test --test live -- --ignored --test-threads=1
 ```
 
 `--ignored` is required because these tests call the live API, and `--test-threads=1` keeps the
@@ -888,7 +884,7 @@ notification delivery; none of it is compiled into the SDK.
 The OAuth discovery tests need no credentials — they use production's public endpoints:
 
 ```bash
-cargo test --test sandbox -- --ignored oauth
+cargo test --test live -- --ignored oauth
 ```
 
 ## License

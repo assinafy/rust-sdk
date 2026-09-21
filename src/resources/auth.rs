@@ -402,7 +402,7 @@ impl<'a> AuthApi<'a> {
     }
 
     /// Build the browser URL that starts the social-login (OAuth) compatibility
-    /// flow available in the sandbox.
+    /// flow.
     ///
     /// Redirect the user's browser to this URL (`GET /auth/authenticate?authclient={provider}`);
     /// the provider then redirects back to `GET /login-callback`. This method

@@ -12,7 +12,7 @@ async fn main() -> assinafy::Result<()> {
     let api_key = std::env::var("ASSINAFY_API_KEY").expect("set ASSINAFY_API_KEY");
     let account_id = std::env::var("ASSINAFY_ACCOUNT_ID").expect("set ASSINAFY_ACCOUNT_ID");
 
-    let client = Client::builder().api_key(api_key).sandbox().build()?;
+    let client = Client::builder().api_key(api_key).build()?;
     let tags = client.tags(&account_id);
 
     let unique = format!("rust-sdk-demo-{}", uuid::Uuid::new_v4().simple());

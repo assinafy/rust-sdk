@@ -72,14 +72,14 @@ pub struct ConfirmSignerDataBody {
     /// documented confirm-data body expects.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub government_id: Option<String>,
-    /// Legacy sandbox extension for the WhatsApp phone number.
+    /// Legacy extension for the WhatsApp phone number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
     /// Legacy extension for accepting terms during confirmation. The current
     /// API exposes [`SignerSelfApi::accept_terms`] separately.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_accepted_terms: Option<bool>,
-    /// Legacy sandbox extension for an inline verification code.
+    /// Legacy extension for an inline verification code.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
 }
@@ -264,7 +264,7 @@ impl<'a> ListSignerDocumentsRequest<'a> {
     ///       "status": "metadata_ready",
     ///       "artifacts": { "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original" },
     ///       "is_closed": false,
-    ///       "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///       "signing_url": "https://app.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
     ///       "decline_reason": null,
     ///       "declined_by": null,
     ///       "tags": [],
@@ -455,7 +455,7 @@ impl<'a> SignerSelfApi<'a> {
     ///       "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail"
     ///     },
     ///     "is_closed": false,
-    ///     "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///     "signing_url": "https://app.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
     ///     "decline_reason": null,
     ///     "declined_by": null,
     ///     "tags": [],
@@ -585,7 +585,7 @@ impl<'a> SignerSelfApi<'a> {
     ///       "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail"
     ///     },
     ///     "is_closed": false,
-    ///     "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///     "signing_url": "https://app.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
     ///     "decline_reason": null,
     ///     "declined_by": null,
     ///     "tags": [],
@@ -642,7 +642,7 @@ impl<'a> SignerSelfApi<'a> {
     ///       "status": "metadata_ready",
     ///       "artifacts": { "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original" },
     ///       "is_closed": false,
-    ///       "signing_url": "https://app-sandbox.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
+    ///       "signing_url": "https://app.assinafy.com.br/sign/103acccd24234c07858ffddf6d84",
     ///       "decline_reason": null,
     ///       "declined_by": null,
     ///       "tags": [],

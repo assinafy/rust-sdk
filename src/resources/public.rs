@@ -11,7 +11,7 @@ use crate::models::PublicDocument;
 ///
 /// Both fields are required by the live API. The published OpenAPI document
 /// describes a single `email` field instead; that shape is rejected with
-/// `400 O atributo "channel" é obrigatório.` on production and sandbox alike,
+/// `400 O atributo "channel" é obrigatório.` on production,
 /// so the SDK follows the live contract.
 ///
 /// ```

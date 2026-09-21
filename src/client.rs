@@ -182,7 +182,6 @@ impl std::fmt::Debug for Client {
 ///
 /// let client = Client::builder()
 ///     .auth(Auth::ApiKey("my-key".into()))
-///     .sandbox()
 ///     .timeout(Duration::from_secs(30))
 ///     .user_agent("my-app/1.0")
 ///     .build()
@@ -209,11 +208,6 @@ impl ClientBuilder {
     /// Target the production environment (the default).
     pub fn production(self) -> Self {
         self.base_url(BaseUrl::Production)
-    }
-
-    /// Target the sandbox environment.
-    pub fn sandbox(self) -> Self {
-        self.base_url(BaseUrl::Sandbox)
     }
 
     /// Set the credential.

@@ -486,9 +486,8 @@ impl fmt::Debug for RevokeRequest {
 ///
 /// # Availability
 ///
-/// The OAuth endpoints are served by **production only**. Against
-/// [`BaseUrl::Sandbox`](crate::BaseUrl::Sandbox) they answer `404 Página não
-/// encontrada.`, and the sandbox host does not publish
+/// The OAuth endpoints are served by **production only**. Other deployments
+/// answer `404 Página não encontrada.` and do not publish
 /// `/.well-known/oauth-protected-resource` at all.
 #[derive(Debug)]
 pub struct OAuthApi<'a> {
