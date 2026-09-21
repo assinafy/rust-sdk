@@ -36,6 +36,10 @@ pub enum Error {
     /// The server returned an unexpected payload that could not be decoded.
     #[error("unexpected response: {0}")]
     UnexpectedResponse(String),
+
+    /// A request was rejected locally because the API could never accept it.
+    #[error("invalid request: {0}")]
+    Validation(String),
 }
 
 impl From<reqwest::Error> for Error {

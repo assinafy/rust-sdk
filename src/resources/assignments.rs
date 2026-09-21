@@ -313,26 +313,35 @@ struct EstimateAssignmentSignerPayload<'a> {
 #[derive(Serialize)]
 struct EstimateAssignmentPayload<'a> {
     method: AssignmentMethod,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    signers: Option<Vec<EstimateAssignmentSignerPayload<'a>>>,
+    // Always emitted: the API prices per signer in both methods and rejects a body without it.
+    signers: Vec<EstimateAssignmentSignerPayload<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     entries: &'a Vec<AssignmentEntry>,
 }
 
 impl<'a> From<&'a EstimateAssignmentCostBody> for EstimateAssignmentPayload<'a> {
     fn from(body: &'a EstimateAssignmentCostBody) -> Self {
-        let signers = body.signers.as_ref().map(|signers| {
-            signers
+        let configured =
+            body.signers
                 .iter()
+                .flatten()
                 .map(|signer| EstimateAssignmentSignerPayload {
                     verification_method: signer.verification_method.as_ref(),
                     notification_methods: signer.notification_methods.as_ref(),
-                })
-                .collect()
-        });
+                });
+        // A legacy `signer_ids` entry carries no channel of its own, and the estimate schema
+        // permits no `id`, so it prices as one default-Email signer. Dropping these would
+        // under-count the estimate.
+        let legacy = body
+            .signer_ids
+            .iter()
+            .map(|_| EstimateAssignmentSignerPayload {
+                verification_method: None,
+                notification_methods: None,
+            });
         Self {
             method: body.method,
-            signers,
+            signers: configured.chain(legacy).collect(),
             entries: &body.entries,
         }
     }
@@ -533,6 +542,14 @@ impl<'a> AssignmentsApi<'a> {
             "estimate-cost",
         ])?;
         let payload = EstimateAssignmentPayload::from(body);
+        // The contract marks `signers` required only for `virtual`, but the API prices per
+        // signer in both modes and answers a signer-less body with
+        // 400 "Pelo menos um signatários precisa ser informado."
+        if payload.signers.is_empty() {
+            return Err(Error::Validation(
+                "at least one signer is required for a cost estimate".into(),
+            ));
+        }
         let req = self.http.request(Method::POST, &path)?.json(&payload);
         self.http.send_envelope(req).await
     }
@@ -833,5 +850,46 @@ mod tests {
         let legacy = CreateAssignmentBody::from_signers(AssignmentMethod::Virtual, [])
             .legacy_signer_ids(["signer-id"]);
         assert!(validate_create_assignment(&legacy).is_ok());
+    }
+
+    /// `collect` is priced per signer too, so the channels have to reach the wire.
+    #[test]
+    fn collect_estimate_payload_carries_signers_and_entries() {
+        let body = CreateAssignmentBody::from_signers(
+            AssignmentMethod::Collect,
+            [CreateAssignmentSigner::default()
+                .verification_method(VerificationMethod::DigitalCertificate)],
+        );
+        let json = serde_json::to_value(EstimateAssignmentPayload::from(&body)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "method": "collect",
+                "signers": [{ "verification_method": "DigitalCertificate" }]
+            })
+        );
+    }
+
+    /// A legacy `signer_ids` caller must still be priced for that many signers.
+    #[test]
+    fn estimate_payload_prices_legacy_signer_ids_as_default_signers() {
+        let body = CreateAssignmentBody::from_signers(AssignmentMethod::Virtual, [])
+            .legacy_signer_ids(["a", "b"]);
+        let json = serde_json::to_value(EstimateAssignmentPayload::from(&body)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "method": "virtual", "signers": [{}, {}] })
+        );
+    }
+
+    /// An empty list would be rejected upstream, so the payload never hides it.
+    #[test]
+    fn estimate_payload_keeps_an_empty_signer_list_visible() {
+        let body = CreateAssignmentBody::from_signers(AssignmentMethod::Virtual, []);
+        let json = serde_json::to_value(EstimateAssignmentPayload::from(&body)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "method": "virtual", "signers": [] })
+        );
     }
 }
