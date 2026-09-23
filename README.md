@@ -217,6 +217,7 @@ Escopos disponíveis (constantes em `assinafy::resources::scope`):
 | `templates:read` | Ler templates, páginas, papéis, campos e tags |
 | `templates:write` | Criar, atualizar e excluir templates e seus componentes |
 | `account:read` | Ler perfil, tema e logo do workspace |
+| `webhooks:write` | Configurar e desativar a assinatura de webhooks do workspace |
 | `openid` | Identificar o usuário autenticado e habilitar `/oauth/userinfo` |
 | `profile` | Incluir o nome do usuário no `id_token`/userinfo |
 | `email` | Incluir o e-mail e sua verificação no `id_token`/userinfo |

@@ -31,6 +31,8 @@ pub mod scope {
     pub const TEMPLATES_WRITE: &str = "templates:write";
     /// Read the workspace's profile, theme and logo.
     pub const ACCOUNT_READ: &str = "account:read";
+    /// Configure and deactivate the workspace webhook subscription.
+    pub const WEBHOOKS_WRITE: &str = "webhooks:write";
     /// Identify the authenticated user and enable `GET /oauth/userinfo`.
     pub const OPENID: &str = "openid";
     /// Include the user's name in the `id_token`/userinfo claims.
@@ -752,7 +754,7 @@ mod tests {
         let pkce =
             PkceChallenge::from_verifier("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk").unwrap();
         let url = AuthorizationRequest::new("client-id", "https://app.example.invalid/cb", &pkce)
-            .scopes([scope::DOCUMENTS_READ, scope::OPENID])
+            .scopes([scope::DOCUMENTS_READ, scope::WEBHOOKS_WRITE, scope::OPENID])
             .state("csrf-state")
             .resource("https://api.assinafy.com.br")
             .url("https://auth.assinafy.com.br/oauth/authorize")
@@ -765,7 +767,7 @@ mod tests {
         assert_eq!(query["redirect_uri"], "https://app.example.invalid/cb");
         assert_eq!(query["code_challenge"], pkce.challenge());
         assert_eq!(query["code_challenge_method"], "S256");
-        assert_eq!(query["scope"], "documents:read openid");
+        assert_eq!(query["scope"], "documents:read webhooks:write openid");
         assert_eq!(query["state"], "csrf-state");
         assert_eq!(query["resource"], "https://api.assinafy.com.br");
     }

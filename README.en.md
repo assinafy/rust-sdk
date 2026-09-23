@@ -217,6 +217,7 @@ Available scopes (constants in `assinafy::resources::scope`):
 | `templates:read` | Read templates, pages, roles, fields and tags |
 | `templates:write` | Create, update and delete templates and their components |
 | `account:read` | Read the workspace's profile, theme and logo |
+| `webhooks:write` | Configure and deactivate the workspace webhook subscription |
 | `openid` | Identify the authenticated user and enable `/oauth/userinfo` |
 | `profile` | Include the user's name in the `id_token`/userinfo claims |
 | `email` | Include the email and its verification status in the `id_token`/userinfo claims |
