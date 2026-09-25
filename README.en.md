@@ -42,7 +42,7 @@ keys, OAuth 2.1, and the signer-facing endpoints.
 ## Install
 
 Requires Rust 1.86 or newer and uses the Rust 2024 edition. CI tests both the declared 1.86
-minimum and the current stable release; Rust has no LTS channel.
+minimum and the current stable release; Rust has no LTS channel. The default HTTP client requires TLS 1.2 or newer.
 
 ```toml
 [dependencies]

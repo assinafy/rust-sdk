@@ -342,6 +342,9 @@ impl ClientBuilder {
                         self.connect_timeout
                             .unwrap_or_else(|| Duration::from_secs(10)),
                     );
+                // The API rejects TLS 1.0 and 1.1; never offer them.
+                #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
+                let builder = builder.tls_version_min(reqwest::tls::Version::TLS_1_2);
                 builder
                     .build()
                     .map_err(|e| Error::Config(format!("failed to build http client: {e}")))?

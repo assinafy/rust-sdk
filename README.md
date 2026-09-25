@@ -42,7 +42,7 @@ chaves de API, OAuth 2.1 e os endpoints voltados ao signatário.
 ## Instalação
 
 Requer Rust 1.86 ou superior e usa a edição Rust 2024. A CI testa tanto o mínimo declarado
-(1.86) quanto o stable atual — Rust não tem canal LTS.
+(1.86) quanto o stable atual — Rust não tem canal LTS. O cliente HTTP padrão exige TLS 1.2 ou superior.
 
 ```toml
 [dependencies]
