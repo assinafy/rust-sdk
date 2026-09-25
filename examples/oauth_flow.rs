@@ -2,9 +2,9 @@
 //!
 //! Steps 1 and 2 (discovery and building the authorization URL) need no
 //! credentials, so running the example with only `ASSINAFY_OAUTH_CLIENT_ID`
-//! set prints a URL you can open in a browser. Set
-//! `ASSINAFY_OAUTH_CODE` to the `code` the browser came back with to run the
-//! exchange as well.
+//! set prints a URL you can open in a browser. Paste the full address the
+//! browser comes back to and the example checks it and exchanges the code; an
+//! empty line stops after the URL.
 //!
 //! ```bash
 //! ASSINAFY_OAUTH_CLIENT_ID=my-client-id \
@@ -14,8 +14,13 @@
 //!
 //! The OAuth endpoints are served by production, which is the default base URL.
 
+use std::collections::HashMap;
+
 use assinafy::resources::{AuthorizationRequest, PkceChallenge, TokenRequest, scope};
 use assinafy::{Auth, Client};
+
+/// The `iss` every Assinafy authorization response carries (RFC 9207).
+const ISSUER: &str = "https://auth.assinafy.com.br";
 
 #[tokio::main]
 async fn main() -> assinafy::Result<()> {
@@ -62,22 +67,41 @@ async fn main() -> assinafy::Result<()> {
         .resource(&resource.resource)
         .url(&server.authorization_endpoint)?;
 
-    println!("\n3. Open this URL and approve access:\n{authorize_url}\n");
+    println!("\n3. Open this URL, approve access, then paste the address you return to:");
+    println!("{authorize_url}\n");
 
-    // 4. Exchange the code the redirect carried back.
-    let Ok(code) = std::env::var("ASSINAFY_OAUTH_CODE") else {
-        println!("Set ASSINAFY_OAUTH_CODE to the `code` query parameter to exchange it.");
+    let mut callback = String::new();
+    std::io::stdin().read_line(&mut callback)?;
+    if callback.trim().is_empty() {
         return Ok(());
-    };
+    }
+    let query: HashMap<String, String> = url::Url::parse(callback.trim())?
+        .query_pairs()
+        .into_owned()
+        .collect();
+    let param = |name: &str| query.get(name).map(String::as_str);
 
+    // Before anything else, `error=` returns included: the response must carry
+    // this attempt's `state` and the Assinafy issuer, or it is not ours.
+    if param("state") != Some(state.as_str()) || param("iss") != Some(ISSUER) {
+        eprintln!("state or iss mismatch: ignoring this response");
+        std::process::exit(1);
+    }
+    if let Some(error) = param("error") {
+        let description = param("error_description").unwrap_or_default();
+        eprintln!("authorization failed: {error} {description}");
+        std::process::exit(1);
+    }
+    let code = param("code").expect("an approved response carries a code");
+
+    // 4. Exchange the code at once (it expires 60 seconds after approval),
+    //    repeating the `resource` sent in step 2.
     let token = client
         .oauth()
-        .token(&TokenRequest::authorization_code(
-            &client_id,
-            code,
-            &redirect_uri,
-            &pkce,
-        ))
+        .token(
+            &TokenRequest::authorization_code(&client_id, code, &redirect_uri, &pkce)
+                .resource(&resource.resource),
+        )
         .await?;
     println!(
         "granted scopes      : {}",
@@ -87,8 +111,11 @@ async fn main() -> assinafy::Result<()> {
     println!("refreshable         : {}", token.refresh_token.is_some());
 
     // 5. Act as the user. The token replaces the client's credential; it is
-    //    never printed, only used.
+    //    never printed, only used. It reaches one workspace, the only one the
+    //    account list returns: store its id with the tokens.
     let as_user = client.with_auth(Auth::Bearer(token.access_token.clone()));
+    let workspace = &as_user.accounts_api().list().await?[0].id;
+    println!("workspace           : {workspace}");
     if token.has_scope(scope::OPENID) {
         let who = as_user.oauth().userinfo().await?;
         println!("acting for          : {} ({:?})", who.sub, who.name);

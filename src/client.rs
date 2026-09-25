@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::auth::Auth;
 use crate::config::BaseUrl;
 use crate::error::{Error, Result};
-use crate::http::HttpClient;
+use crate::http::{HttpClient, transport};
 use crate::resources::{
     AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, DocumentsApi,
     FieldsApi, OAuthApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, UsersApi,
@@ -261,8 +261,8 @@ impl ClientBuilder {
     /// requests.
     ///
     /// Only [`ClientBuilder::timeout`]/[`ClientBuilder::connect_timeout`] are
-    /// bypassed when this is set (they configure `reqwest::Client` itself, so
-    /// your own client's settings win). The SDK still sets its own
+    /// bypassed for the requests it carries (they configure `reqwest::Client`
+    /// itself, so your own client's settings win). The SDK still sets its own
     /// `User-Agent` header (the default, or your [`ClientBuilder::user_agent`]
     /// override) explicitly on every request — via `RequestBuilder::header`,
     /// which always overrides a client-level default — so a `User-Agent`
@@ -275,6 +275,13 @@ impl ClientBuilder {
     /// whenever a credential is configured. Prefer the SDK-owned client for
     /// authenticated calls; use [`ClientBuilder::authenticated_http_client`]
     /// only when the caller has disabled redirects explicitly.
+    ///
+    /// OAuth token and revocation requests ([`OAuthApi::token`],
+    /// [`OAuthApi::revoke`]) never use the supplied client: they carry
+    /// single-use secrets, so they always go through an SDK-owned transport
+    /// that never follows a redirect or resends a request. It is built on
+    /// first use, with TLS 1.2 or later, the platform's root certificates and
+    /// this builder's timeouts.
     pub fn http_client(mut self, client: reqwest::Client) -> Self {
         self.http_client = Some(client);
         self.allow_authenticated_http_client = false;
@@ -290,6 +297,9 @@ impl ClientBuilder {
     /// Reqwest does not expose those settings after construction, so the SDK
     /// cannot verify them. A client that follows redirects can forward an
     /// `X-Api-Key` header to another origin.
+    ///
+    /// As with [`http_client`](Self::http_client), OAuth token and revocation
+    /// requests never use the supplied client.
     ///
     /// ```
     /// use assinafy::Client;
@@ -320,6 +330,8 @@ impl ClientBuilder {
             .user_agent
             .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
 
+        let timeout = self.timeout.unwrap_or(Duration::from_secs(60));
+        let connect_timeout = self.connect_timeout.unwrap_or(Duration::from_secs(10));
         let restrict_custom_transport_auth =
             self.http_client.is_some() && !self.allow_authenticated_http_client;
         let http = match self.http_client {
@@ -332,27 +344,21 @@ impl ClientBuilder {
                 }
                 c
             }
-            None => {
-                let builder = reqwest::Client::builder()
-                    .user_agent(&user_agent)
-                    .referer(false)
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(self.timeout.unwrap_or_else(|| Duration::from_secs(60)))
-                    .connect_timeout(
-                        self.connect_timeout
-                            .unwrap_or_else(|| Duration::from_secs(10)),
-                    );
-                // The API rejects TLS 1.0 and 1.1; never offer them.
-                #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
-                let builder = builder.tls_version_min(reqwest::tls::Version::TLS_1_2);
-                builder
-                    .build()
-                    .map_err(|e| Error::Config(format!("failed to build http client: {e}")))?
-            }
+            None => transport(&user_agent, timeout, connect_timeout)
+                .build()
+                .map_err(|e| Error::Config(format!("failed to build http client: {e}")))?,
         };
 
         Ok(Client {
-            http: HttpClient::new(http, base, auth, user_agent, restrict_custom_transport_auth),
+            http: HttpClient::new(
+                http,
+                base,
+                auth,
+                user_agent,
+                timeout,
+                connect_timeout,
+                restrict_custom_transport_auth,
+            ),
         })
     }
 }

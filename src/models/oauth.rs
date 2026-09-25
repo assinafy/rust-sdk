@@ -39,15 +39,27 @@ pub struct TokenResponse {
     /// Refresh token. Present only when the `offline_access` scope was both
     /// requested and consented; otherwise the user must re-authorize once
     /// `access_token` expires.
+    ///
+    /// Every refresh returns a new one and retires the one it was traded
+    /// for: persist it before doing anything else with this response. It is
+    /// valid for 30 days, and each refresh starts a fresh 30 days. On a
+    /// refresh, [`OAuthApi::token`](crate::resources::OAuthApi::token) only
+    /// succeeds when it is present and new.
     #[serde(default)]
     pub refresh_token: Option<String>,
     /// Space-separated scopes carried by `access_token`. `offline_access` is
     /// a request-time signal rather than a permission, so it never appears
-    /// here even when it was requested.
+    /// here even when it was requested: check
+    /// [`refresh_token`](Self::refresh_token) to learn whether one was issued.
     #[serde(default)]
     pub scope: Option<String>,
     /// Signed OIDC ID token (RS256). Present only when the `openid` scope was
     /// granted.
+    ///
+    /// The SDK does not validate it. Before trusting its claims, verify the
+    /// signature with the key from `jwks_uri` whose `kid` matches, and that
+    /// `iss` is `https://auth.assinafy.com.br`, `aud` is your client id,
+    /// `exp` is in the future and `nonce` matches the one you sent, if any.
     #[serde(default)]
     pub id_token: Option<String>,
 }

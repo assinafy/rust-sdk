@@ -493,6 +493,7 @@ impl<'a> DocumentsApi<'a> {
     /// ```json
     /// { "status": 200, "message": "", "data": {
     ///   "hash": "FE32EDDADE7CBDDCBB934E7402047450B0E59C02", "id": "103acccd24234c07858ffddf6d84",
+    ///   "agreement_code": "550E8400-E29B-41D4-A716-446655440000",
     ///   "status": "certificated", "page_count": "1", "signer_count": "1",
     ///   "completed_count": 1, "completed_at": "2026-07-19T19:27:44Z",
     ///   "verified_at": "2026-07-19T19:27:46Z", "is_valid": true, "message": "" } }

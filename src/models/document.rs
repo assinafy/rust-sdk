@@ -253,6 +253,9 @@ pub struct DocumentVerification {
     /// Document identifier, when the hash resolves to a certificated document.
     #[serde(default)]
     pub id: Option<String>,
+    /// Agreement code printed on the document certificate, when found.
+    #[serde(default)]
+    pub agreement_code: Option<String>,
     /// Document status, when found.
     #[serde(default)]
     pub status: Option<String>,

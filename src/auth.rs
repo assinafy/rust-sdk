@@ -17,7 +17,8 @@ pub enum Auth {
     ///
     /// Prefer [`Auth::Bearer`] for new integrations. This variant exists for
     /// endpoints and deployments that rely on the URL-parameter form documented
-    /// by the API.
+    /// by the API. OAuth access tokens are refused here: send them with
+    /// [`Auth::Bearer`].
     AccessToken(String),
     /// Signer access code sent as the `?signer-access-code=<code>` query
     /// parameter. Used by signer-facing endpoints.

@@ -158,12 +158,16 @@ exceto o redirecionamento do navegador:
 1. descoberta      GET /.well-known/oauth-protected-resource
                    GET {issuer}/.well-known/oauth-authorization-server
 2. autorização     navegador → {authorization_endpoint}?code_challenge=...
-3. consentimento   usuário aprova → redirect_uri?code=...&state=...
+3. consentimento   usuário aprova → redirect_uri?code=...&state=...&iss=...
 4. troca           POST /v1/oauth/token   (code + code_verifier)
 5. uso             Authorization: Bearer <access_token>
                    POST /v1/oauth/token   (refresh_token)
                    POST /v1/oauth/revoke
 ```
+
+Gere um par PKCE e um `state` novos a cada tentativa. No retorno ao `redirect_uri`, antes de
+qualquer outra coisa — inclusive quando vier `error=...` —, confira se `state` é o valor guardado
+e se `iss` é `https://auth.assinafy.com.br`; se algum diferir, pare: a resposta não é sua.
 
 ```rust,no_run
 use assinafy::resources::{AuthorizationRequest, PkceChallenge, TokenRequest, scope};
@@ -180,30 +184,36 @@ async fn autorizar(client_id: &str, redirect_uri: &str) -> assinafy::Result<()> 
         .authorization_server_metadata(&recurso.authorization_servers[0])
         .await?;
 
-    // 2. Guarde o par PKCE e o `state` até o callback.
+    // 2. Par PKCE e `state` novos a cada tentativa; guarde os dois até o callback.
     let pkce = PkceChallenge::generate()?;
     let url = AuthorizationRequest::new(client_id, redirect_uri, &pkce)
         .scopes([scope::DOCUMENTS_READ, scope::DOCUMENTS_WRITE, scope::OPENID])
-        .state("valor-opaco-por-sessão")
+        .state("valor-aleatório-por-tentativa")
         .resource(&recurso.resource)
         .url(&servidor.authorization_endpoint)?;
     println!("abra {url}");
 
-    // 4. Troque o `code` que voltou no redirecionamento.
+    // 4. Conferidos `state` e `iss`, troque o `code` que voltou no redirecionamento,
+    //    repetindo o `resource` enviado no passo 2.
     let token = client
         .oauth()
-        .token(&TokenRequest::authorization_code(
-            client_id,
-            "code-do-redirecionamento",
-            redirect_uri,
-            &pkce,
-        ))
+        .token(
+            &TokenRequest::authorization_code(
+                client_id,
+                "code-do-redirecionamento",
+                redirect_uri,
+                &pkce,
+            )
+            .resource(&recurso.resource),
+        )
         .await?;
 
-    // 5. Passe a agir pelo usuário.
+    // 5. Passe a agir pelo usuário. O token alcança um único workspace, o único que
+    //    `GET /v1/accounts` devolve: guarde o id dele junto dos tokens.
     let como_usuario = client.with_auth(Auth::Bearer(token.access_token.clone()));
+    let workspace = &como_usuario.accounts_api().list().await?[0].id;
     let quem = como_usuario.oauth().userinfo().await?;
-    println!("agindo por {}", quem.sub);
+    println!("agindo por {} no workspace {workspace}", quem.sub);
     Ok(())
 }
 ```
@@ -224,55 +234,87 @@ Escopos disponíveis (constantes em `assinafy::resources::scope`):
 | `offline_access` | Emitir refresh token — só para clientes que pedem explicitamente |
 
 Peça sempre o conjunto mínimo. Um escopo ausente responde `403` com
-`WWW-Authenticate: Bearer error="insufficient_scope"` nomeando o que falta.
+`WWW-Authenticate: Bearer error="insufficient_scope"` nomeando o que falta; o SDK entrega esses
+escopos em `Error::insufficient_scope`. Reconecte pedindo-os — repetir a chamada não resolve. Um
+`403` sem esse desafio indica outro workspace, o papel do usuário ou uma área que tokens OAuth
+nunca alcançam.
 
-Renovação e revogação:
+Renovação: o access token dura 1 hora e, com `offline_access`, é renovado sem o usuário. Cada
+renovação devolve um refresh token **novo** e aposenta o anterior, e reutilizar um refresh token
+aposentado encerra a conexão inteira. Por isso, salve o novo refresh token antes de qualquer outra
+coisa e faça uma renovação por vez em cada conexão. O SDK envia cada pedido de token uma única
+vez — nunca o repete nem segue redirecionamentos — e rejeita uma renovação bem-sucedida que não
+traga um refresh token novo.
 
-```rust,no_run
-use assinafy::Client;
-use assinafy::resources::{RevokeRequest, TokenRequest};
+Quando uma renovação falha sem resposta definitiva — timeout, conexão interrompida, `5xx`, sucesso
+sem refresh token novo —, suponha que o token enviado foi aposentado. Releia o token guardado: se
+outro worker salvou um diferente, siga com ele; se continua o mesmo, **nunca o envie de novo** —
+marque a conexão como desconectada e peça ao usuário para conectar de novo. Só as falhas que
+comprovadamente ocorreram antes do envio — resolução de DNS, conexão recusada, handshake TLS: um
+`Error::Http` cujo `is_connect()` é verdadeiro — deixam o token intacto e podem ser repetidas.
 
-async fn renovar(client_id: &str, refresh_token: &str) -> assinafy::Result<()> {
-    let client = Client::builder().build()?;
-
-    let novo = client
-        .oauth()
-        .token(&TokenRequest::refresh_token(client_id, refresh_token))
-        .await?;
-    println!("escopos: {}", novo.scopes().collect::<Vec<_>>().join(" "));
-
-    // A revogação responde 200 para qualquer resultado — inclusive token
-    // inexistente —, então nunca serve para sondar se um token existe.
-    client
-        .oauth()
-        .revoke(&RevokeRequest::refresh_token(client_id, refresh_token))
-        .await?;
-    Ok(())
-}
-```
+Um refresh token vale 30 dias, e cada renovação devolve um novo com mais 30 dias: a conexão só
+expira se passar 30 dias sem renovação.
 
 As falhas do endpoint de token seguem o objeto plano `{ error, error_description }` da RFC 6749
 §5.2. O SDK preserva ambos: a descrição vira a mensagem do erro e o código fica acessível em
 `ApiError::oauth_error`.
 
 ```rust,no_run
-use assinafy::{Client, Error};
+use assinafy::Client;
+use assinafy::models::TokenResponse;
 use assinafy::resources::TokenRequest;
 
-async fn trocar(client_id: &str, refresh_token: &str) -> assinafy::Result<()> {
-    let client = Client::builder().build()?;
+/// Renova o access token. `salvar` grava de forma durável o refresh token novo da
+/// resposta; se falhar, o erro é devolvido e o access token não é usado.
+async fn renovar(
+    client: &Client,
+    client_id: &str,
+    refresh_token: &str,
+    salvar: impl FnOnce(&TokenResponse) -> std::io::Result<()>,
+) -> assinafy::Result<Option<String>> {
     match client
         .oauth()
         .token(&TokenRequest::refresh_token(client_id, refresh_token))
         .await
     {
-        Ok(token) => println!("expira em {:?}s", token.expires_in),
-        // O refresh token caducou ou foi revogado: refaça a autorização.
-        Err(e) if e.oauth_error() == Some("invalid_grant") => println!("autorize de novo"),
-        Err(Error::Api(e)) => println!("{}: {}", e.status, e.message),
-        Err(outro) => return Err(outro),
+        Ok(novo) => {
+            // O refresh token enviado acaba de ser aposentado, e uma renovação bem-sucedida
+            // sempre traz um novo: salve-o antes de usar o access token.
+            salvar(&novo)?;
+            Ok(Some(novo.access_token))
+        }
+        // A conexão acabou (refresh token já usado, 30 dias sem renovação, revogado ou
+        // nova aprovação com outras permissões): marque-a como desconectada e peça ao
+        // usuário para conectar de novo, sem repetir a renovação.
+        Err(e) if e.oauth_error() == Some("invalid_grant") => Ok(None),
+        // Qualquer outra falha pode ter aposentado o token enviado: a menos que
+        // `is_connect()` mostre que o pedido nem saiu, releia o token guardado e nunca o
+        // reenvie inalterado.
+        Err(outro) => Err(outro),
     }
-    Ok(())
+}
+```
+
+Em um `401` da API, renove uma vez; se a renovação falhar, peça ao usuário para conectar de novo.
+
+Para desconectar, revogue o refresh token atual e só então apague os tokens guardados:
+
+```rust,no_run
+use assinafy::Client;
+use assinafy::resources::RevokeRequest;
+
+async fn desconectar(
+    client: &Client,
+    client_id: &str,
+    refresh_token: &str,
+) -> assinafy::Result<()> {
+    // A revogação responde 200 para qualquer resultado — inclusive token
+    // inexistente —, então nunca serve para sondar se um token existe.
+    client
+        .oauth()
+        .revoke(&RevokeRequest::refresh_token(client_id, refresh_token))
+        .await
 }
 ```
 

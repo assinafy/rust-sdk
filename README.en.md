@@ -158,12 +158,17 @@ step except the browser redirect:
 1. discovery       GET /.well-known/oauth-protected-resource
                    GET {issuer}/.well-known/oauth-authorization-server
 2. authorization   browser → {authorization_endpoint}?code_challenge=...
-3. consent         user approves → redirect_uri?code=...&state=...
+3. consent         user approves → redirect_uri?code=...&state=...&iss=...
 4. exchange        POST /v1/oauth/token   (code + code_verifier)
 5. use             Authorization: Bearer <access_token>
                    POST /v1/oauth/token   (refresh_token)
                    POST /v1/oauth/revoke
 ```
+
+Create a new PKCE pair and a new `state` for every attempt. When the browser returns to your
+`redirect_uri`, before anything else — `error=...` returns included — check that `state` equals
+the stored value and that `iss` equals `https://auth.assinafy.com.br`; if either differs, stop:
+the response is not yours.
 
 ```rust,no_run
 use assinafy::resources::{AuthorizationRequest, PkceChallenge, TokenRequest, scope};
@@ -180,30 +185,36 @@ async fn authorize(client_id: &str, redirect_uri: &str) -> assinafy::Result<()> 
         .authorization_server_metadata(&resource.authorization_servers[0])
         .await?;
 
-    // 2. Keep the PKCE pair and the `state` until the callback.
+    // 2. A new PKCE pair and `state` for every attempt; keep both until the callback.
     let pkce = PkceChallenge::generate()?;
     let url = AuthorizationRequest::new(client_id, redirect_uri, &pkce)
         .scopes([scope::DOCUMENTS_READ, scope::DOCUMENTS_WRITE, scope::OPENID])
-        .state("opaque-per-session-value")
+        .state("random-per-attempt-value")
         .resource(&resource.resource)
         .url(&server.authorization_endpoint)?;
     println!("open {url}");
 
-    // 4. Exchange the `code` the redirect came back with.
+    // 4. Once `state` and `iss` check out, exchange the `code` the redirect came back
+    //    with, repeating the `resource` sent in step 2.
     let token = client
         .oauth()
-        .token(&TokenRequest::authorization_code(
-            client_id,
-            "code-from-the-redirect",
-            redirect_uri,
-            &pkce,
-        ))
+        .token(
+            &TokenRequest::authorization_code(
+                client_id,
+                "code-from-the-redirect",
+                redirect_uri,
+                &pkce,
+            )
+            .resource(&resource.resource),
+        )
         .await?;
 
-    // 5. Start acting for the user.
+    // 5. Start acting for the user. The token reaches one workspace, the only one
+    //    `GET /v1/accounts` returns: store its id with the tokens.
     let as_user = client.with_auth(Auth::Bearer(token.access_token.clone()));
+    let workspace = &as_user.accounts_api().list().await?[0].id;
     let who = as_user.oauth().userinfo().await?;
-    println!("acting for {}", who.sub);
+    println!("acting for {} in workspace {workspace}", who.sub);
     Ok(())
 }
 ```
@@ -224,55 +235,87 @@ Available scopes (constants in `assinafy::resources::scope`):
 | `offline_access` | Issue a refresh token — only for clients that ask explicitly |
 
 Always request the narrowest set. A missing scope answers `403` with
-`WWW-Authenticate: Bearer error="insufficient_scope"` naming what is missing.
+`WWW-Authenticate: Bearer error="insufficient_scope"` naming what is missing; the SDK hands those
+scopes back from `Error::insufficient_scope`. Reconnect requesting them — retrying the call cannot
+succeed. A `403` without that challenge means another workspace, the user's own role, or an area
+OAuth tokens never reach.
 
-Refresh and revocation:
+Refresh: an access token lasts 1 hour and, with `offline_access`, is renewed without the user.
+Every refresh returns a **new** refresh token and retires the old one, and reusing a retired
+refresh token ends the whole connection. So save the new refresh token before anything else, and
+refresh one at a time per connection. The SDK sends each token request exactly once — it never
+retries one or follows a redirect — and rejects a refresh that succeeds without a new refresh
+token.
 
-```rust,no_run
-use assinafy::Client;
-use assinafy::resources::{RevokeRequest, TokenRequest};
+When a refresh fails without a definitive answer — a timeout, a dropped connection, a `5xx`, a
+success without a new refresh token — assume the token you sent is retired. Re-read the stored
+token: if another worker saved a different one, carry on with that one; if it is unchanged,
+**never send it again** — mark the connection disconnected and ask the user to connect again.
+Only failures that provably happened before the request was sent — DNS resolution, a refused
+connection, the TLS handshake: an `Error::Http` whose `is_connect()` is true — leave the token
+unused and are safe to retry.
 
-async fn refresh(client_id: &str, refresh_token: &str) -> assinafy::Result<()> {
-    let client = Client::builder().build()?;
-
-    let fresh = client
-        .oauth()
-        .token(&TokenRequest::refresh_token(client_id, refresh_token))
-        .await?;
-    println!("scopes: {}", fresh.scopes().collect::<Vec<_>>().join(" "));
-
-    // Revocation answers 200 for every token outcome — including a token that
-    // does not exist — so it can never be used to probe whether one exists.
-    client
-        .oauth()
-        .revoke(&RevokeRequest::refresh_token(client_id, refresh_token))
-        .await?;
-    Ok(())
-}
-```
+A refresh token is valid for 30 days, and every refresh returns a new one with a fresh 30 days: a
+connection only expires after 30 days without a refresh.
 
 Token-endpoint failures follow RFC 6749 §5.2's flat `{ error, error_description }` object. The
 SDK preserves both: the description becomes the error's message and the code is available from
 `ApiError::oauth_error`.
 
 ```rust,no_run
+use assinafy::Client;
+use assinafy::models::TokenResponse;
 use assinafy::resources::TokenRequest;
-use assinafy::{Client, Error};
 
-async fn exchange(client_id: &str, refresh_token: &str) -> assinafy::Result<()> {
-    let client = Client::builder().build()?;
+/// Refreshes the access token. `save` durably stores the response's new refresh token;
+/// if it fails, its error is returned and the access token goes unused.
+async fn refresh(
+    client: &Client,
+    client_id: &str,
+    refresh_token: &str,
+    save: impl FnOnce(&TokenResponse) -> std::io::Result<()>,
+) -> assinafy::Result<Option<String>> {
     match client
         .oauth()
         .token(&TokenRequest::refresh_token(client_id, refresh_token))
         .await
     {
-        Ok(token) => println!("expires in {:?}s", token.expires_in),
-        // The refresh token expired or was revoked: re-run the authorization.
-        Err(e) if e.oauth_error() == Some("invalid_grant") => println!("authorize again"),
-        Err(Error::Api(e)) => println!("{}: {}", e.status, e.message),
-        Err(other) => return Err(other),
+        Ok(fresh) => {
+            // The refresh token just sent is now retired, and a successful refresh always
+            // carries a new one: save it before using the access token.
+            save(&fresh)?;
+            Ok(Some(fresh.access_token))
+        }
+        // The connection is over (refresh token already used, 30 days without a refresh,
+        // revoked, or the user approved again with different permissions): mark it
+        // disconnected and ask the user to connect again, without retrying the refresh.
+        Err(e) if e.oauth_error() == Some("invalid_grant") => Ok(None),
+        // Anything else may have retired the token just sent: unless `is_connect()` shows
+        // the request never left, re-read the stored token and never resend it unchanged.
+        Err(other) => Err(other),
     }
-    Ok(())
+}
+```
+
+On an API `401`, refresh once; if the refresh fails, ask the user to connect again.
+
+To disconnect, revoke the current refresh token, then delete the stored tokens:
+
+```rust,no_run
+use assinafy::Client;
+use assinafy::resources::RevokeRequest;
+
+async fn disconnect(
+    client: &Client,
+    client_id: &str,
+    refresh_token: &str,
+) -> assinafy::Result<()> {
+    // Revocation answers 200 for every token outcome — including a token that
+    // does not exist — so it can never be used to probe whether one exists.
+    client
+        .oauth()
+        .revoke(&RevokeRequest::refresh_token(client_id, refresh_token))
+        .await
 }
 ```
 

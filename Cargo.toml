@@ -1,6 +1,6 @@
 [package]
 name = "assinafy"
-version = "3.3.1"
+version = "3.4.0"
 edition = "2024"
 rust-version = "1.86"
 description = "Idiomatic async Rust SDK for the Assinafy electronic signature API (https://api.assinafy.com.br/v1)."
@@ -27,6 +27,8 @@ bytes = "1"
 # dependencies of their own.
 getrandom = "0.4"
 sha2 = "0.11"
+# `form` encodes the OAuth token and revocation bodies, which RFC 6749 §3.2 and
+# RFC 7009 §2.1 define as application/x-www-form-urlencoded.
 # `default-features = false` only to opt out of reqwest's `default-tls`, which
 # this crate's own rustls-tls/native-tls features select instead. The rest of
 # reqwest's defaults (http2, system-proxy, charset) are re-enabled explicitly —
@@ -34,6 +36,7 @@ sha2 = "0.11"
 # without `http2` it is HTTP/1.1-only.
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
+    "form",
     "multipart",
     "query",
     "gzip",

@@ -89,6 +89,13 @@ impl Error {
     pub fn oauth_error(&self) -> Option<&str> {
         self.api().and_then(ApiError::oauth_error)
     }
+
+    /// Returns the scopes an OAuth token lacks, when the API refused it with
+    /// `403` and an `insufficient_scope` challenge. See
+    /// [`ApiError::insufficient_scope`].
+    pub fn insufficient_scope(&self) -> Option<&str> {
+        self.api().and_then(|e| e.insufficient_scope.as_deref())
+    }
 }
 
 /// Structured payload returned by the Assinafy API for non-2xx responses.
@@ -116,6 +123,13 @@ pub struct ApiError {
     /// `X-Rate-Limit-Reset` response header when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    /// Space-separated scopes an OAuth token lacks, parsed from a
+    /// `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"`
+    /// challenge. Retrying cannot succeed: run the authorization flow again
+    /// requesting these scopes too. A `403` without it means another
+    /// workspace, the user's own role, or an area OAuth tokens never reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insufficient_scope: Option<String>,
 }
 
 impl ApiError {
@@ -125,9 +139,11 @@ impl ApiError {
     /// Those endpoints answer with a flat `{ error, error_description }`
     /// object rather than this API's envelope; the whole body is preserved in
     /// [`data`](Self::data) and [`message`](Self::message) carries the
-    /// description. Branch on the code to tell a retryable condition
-    /// (`invalid_grant` — re-run the authorization flow) from a permanent one
-    /// (`invalid_client`, `unsupported_grant_type`).
+    /// description. Branch on the code: `invalid_grant` on a refresh means the
+    /// connection is over — mark it disconnected and send the user through
+    /// the authorization flow again, never retry the refresh — while
+    /// `invalid_client` and `unsupported_grant_type` are configuration
+    /// errors.
     ///
     /// ```
     /// # use assinafy::ApiError;

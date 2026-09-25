@@ -1,7 +1,8 @@
 //! Internal HTTP helpers: envelope decoding, error mapping, and the shared
 //! [`HttpClient`] used by every resource module.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use reqwest::header::{ACCEPT, HeaderMap, LOCATION};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
@@ -30,9 +31,45 @@ pub struct Envelope<T> {
     pub data: T,
 }
 
+/// The SDK-owned transport: TLS 1.2 or later, no redirects, no `Referer`.
+pub(crate) fn transport(
+    user_agent: &str,
+    timeout: Duration,
+    connect_timeout: Duration,
+) -> reqwest::ClientBuilder {
+    let builder = reqwest::Client::builder()
+        .user_agent(user_agent)
+        .referer(false)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .connect_timeout(connect_timeout);
+    // The API rejects TLS 1.0 and 1.1; never offer them.
+    #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
+    let builder = builder.tls_version_min(reqwest::tls::Version::TLS_1_2);
+    builder
+}
+
+/// The transport for OAuth token and revocation requests, whatever
+/// [`ClientBuilder::http_client`](crate::ClientBuilder::http_client)
+/// supplied. They carry single-use secrets, so on top of never following a
+/// redirect it never resends a request — not even the HTTP/2 refusals reqwest
+/// otherwise retries by default.
+fn oauth_transport(
+    user_agent: &str,
+    timeout: Duration,
+    connect_timeout: Duration,
+) -> reqwest::ClientBuilder {
+    transport(user_agent, timeout, connect_timeout).retry(reqwest::retry::never())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct HttpClient {
     inner: reqwest::Client,
+    /// [`oauth_transport`], built on first use — a client that never calls
+    /// the OAuth token endpoints never builds it — and shared by clones.
+    oauth: Arc<OnceLock<reqwest::Client>>,
+    timeout: Duration,
+    connect_timeout: Duration,
     base: Arc<Url>,
     auth: Arc<Auth>,
     user_agent: Arc<String>,
@@ -45,10 +82,15 @@ impl HttpClient {
         base: BaseUrl,
         auth: Auth,
         user_agent: String,
+        timeout: Duration,
+        connect_timeout: Duration,
         restrict_custom_transport_auth: bool,
     ) -> Self {
         HttpClient {
             inner: client,
+            oauth: Arc::default(),
+            timeout,
+            connect_timeout,
             base: Arc::new(base.as_url()),
             auth: Arc::new(auth),
             user_agent: Arc::new(user_agent),
@@ -67,6 +109,9 @@ impl HttpClient {
     pub(crate) fn with_auth(&self, auth: Auth) -> Self {
         HttpClient {
             inner: self.inner.clone(),
+            oauth: self.oauth.clone(),
+            timeout: self.timeout,
+            connect_timeout: self.connect_timeout,
             base: self.base.clone(),
             auth: Arc::new(auth),
             user_agent: self.user_agent.clone(),
@@ -159,11 +204,7 @@ impl HttpClient {
         url: Url,
     ) -> Result<RequestBuilder> {
         crate::config::validate_https_url(&url)?;
-        Ok(self
-            .inner
-            .request(method, url)
-            .header(ACCEPT, "application/json")
-            .header(reqwest::header::USER_AGENT, self.user_agent.as_str()))
+        Ok(self.unauthenticated(&self.inner, method, url))
     }
 
     pub(crate) fn request(&self, method: Method, path: &str) -> Result<RequestBuilder> {
@@ -181,13 +222,37 @@ impl HttpClient {
     /// This is reserved for operations whose OpenAPI definition explicitly
     /// declares `security: []`.
     pub(crate) fn request_public(&self, method: Method, path: &str) -> Result<RequestBuilder> {
+        Ok(self.unauthenticated(&self.inner, method, self.url(path)?))
+    }
+
+    /// Build an OAuth token or revocation `POST`, which carries single-use
+    /// secrets in its body, on the SDK-owned OAuth transport: never the
+    /// caller's client, never a redirect, never a second send. No credential
+    /// is applied; the OAuth client identifies itself in the body.
+    pub(crate) fn request_oauth(&self, path: &str) -> Result<RequestBuilder> {
         let url = self.url(path)?;
-        let req = self
-            .inner
+        let oauth = match self.oauth.get() {
+            Some(oauth) => oauth,
+            None => {
+                let oauth = oauth_transport(&self.user_agent, self.timeout, self.connect_timeout)
+                    .build()
+                    .map_err(|e| Error::Config(format!("failed to build http client: {e}")))?;
+                self.oauth.get_or_init(|| oauth)
+            }
+        };
+        Ok(self.unauthenticated(oauth, Method::POST, url))
+    }
+
+    fn unauthenticated(
+        &self,
+        client: &reqwest::Client,
+        method: Method,
+        url: Url,
+    ) -> RequestBuilder {
+        client
             .request(method, url)
             .header(ACCEPT, "application/json")
-            .header(reqwest::header::USER_AGENT, self.user_agent.as_str());
-        Ok(req)
+            .header(reqwest::header::USER_AGENT, self.user_agent.as_str())
     }
 
     /// Perform a request, decode the JSON envelope, and return the `data`.
@@ -320,6 +385,37 @@ fn retry_after_from(headers: Option<&HeaderMap>) -> Option<u64> {
         })
 }
 
+/// Reads the scopes named by a `WWW-Authenticate: Bearer
+/// error="insufficient_scope", scope="…"` challenge (RFC 6750 §3), which the
+/// API sends when an OAuth token lacks the scope an endpoint requires.
+fn insufficient_scope_from(headers: Option<&HeaderMap>) -> Option<String> {
+    let challenge = headers?
+        .get(reqwest::header::WWW_AUTHENTICATE)?
+        .to_str()
+        .ok()?;
+    let (mut error, mut scope) = (None, None);
+    // Split on the commas between parameters, not those inside quoted values.
+    let mut quoted = false;
+    let params = challenge.split(|c| {
+        quoted ^= c == '"';
+        c == ',' && !quoted
+    });
+    for param in params {
+        let Some((name, value)) = param.split_once('=') else {
+            continue;
+        };
+        // The first parameter follows the `Bearer` scheme name.
+        let name = name.trim().rsplit(' ').next().unwrap_or_default();
+        let value = value.trim().trim_matches('"');
+        match name {
+            "error" => error = Some(value),
+            "scope" => scope = Some(value),
+            _ => {}
+        }
+    }
+    (error == Some("insufficient_scope")).then(|| scope.unwrap_or_default().to_owned())
+}
+
 /// Extracts the response `Content-Type`, falling back to
 /// `application/octet-stream` when absent or non-UTF-8.
 fn content_type_of(headers: &HeaderMap) -> String {
@@ -374,6 +470,7 @@ fn unexpected_decode_error(context: &str, error: serde_json::Error, body_len: us
 
 fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Error {
     let retry_after = retry_after_from(headers);
+    let insufficient_scope = insufficient_scope_from(headers);
     let api = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(serde_json::Value::Object(mut map)) => {
             let code = map
@@ -404,6 +501,7 @@ fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Er
                 message,
                 data,
                 retry_after,
+                insufficient_scope,
             }
         }
         _ => ApiError {
@@ -411,6 +509,7 @@ fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Er
             message: String::from_utf8_lossy(body).into_owned(),
             data: serde_json::Value::Null,
             retry_after,
+            insufficient_scope,
         },
     };
     Error::Api(api)
@@ -448,6 +547,42 @@ mod tests {
     }
 
     #[test]
+    fn map_error_reads_the_scopes_an_insufficient_scope_challenge_names() {
+        let body = br#"{"status":403,"message":"You are not allowed to perform this action.","data":null}"#;
+        let with = |challenge: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                reqwest::header::WWW_AUTHENTICATE,
+                challenge.parse().unwrap(),
+            );
+            map_error(StatusCode::FORBIDDEN, Some(&headers), body)
+        };
+
+        let error = with(
+            r#"Bearer error="insufficient_scope", scope="documents:write", resource_metadata="https://api.assinafy.com.br/.well-known/oauth-protected-resource""#,
+        );
+        assert_eq!(error.status(), Some(403));
+        assert_eq!(error.insufficient_scope(), Some("documents:write"));
+        // A comma inside a quoted value does not split the parameters.
+        let error = with(
+            r#"Bearer error="insufficient_scope", error_description="needs a, b", scope="documents:write templates:read""#,
+        );
+        assert_eq!(
+            error.insufficient_scope(),
+            Some("documents:write templates:read")
+        );
+        // Any other 403 carries no scope to reconnect with.
+        assert_eq!(
+            with(r#"Bearer error="invalid_token""#).insufficient_scope(),
+            None
+        );
+        assert_eq!(
+            map_error(StatusCode::FORBIDDEN, None, body).insufficient_scope(),
+            None
+        );
+    }
+
+    #[test]
     fn public_request_omits_every_configured_credential() {
         let base = BaseUrl::custom("https://api.example.invalid/v1").unwrap();
         let credentials = [
@@ -463,6 +598,8 @@ mod tests {
                 base.clone(),
                 auth,
                 "assinafy-test".into(),
+                Duration::ZERO,
+                Duration::ZERO,
                 false,
             );
             let request = http
@@ -488,6 +625,8 @@ mod tests {
             BaseUrl::custom("https://api.example.invalid/v1").unwrap(),
             Auth::None,
             "assinafy-test".into(),
+            Duration::ZERO,
+            Duration::ZERO,
             false,
         );
 
@@ -522,6 +661,8 @@ mod tests {
             BaseUrl::custom("https://api.example.invalid/v1").unwrap(),
             Auth::None,
             "assinafy-test".into(),
+            Duration::ZERO,
+            Duration::ZERO,
             false,
         );
 
@@ -571,5 +712,65 @@ mod tests {
             assert!(!rendered.contains(SECRET));
             assert!(rendered.contains("body length:"));
         }
+    }
+
+    #[tokio::test]
+    async fn a_refused_http2_token_request_is_not_resent() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // A bare HTTP/2 server that answers every request stream with
+        // RST_STREAM(REFUSED_STREAM), a refusal reqwest retries by default.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let seen = requests.clone();
+        std::thread::spawn(move || -> std::io::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.read_exact(&mut [0; 24])?; // client connection preface
+            stream.write_all(&[0, 0, 0, 4, 0, 0, 0, 0, 0])?; // empty SETTINGS
+            let mut header = [0; 9];
+            loop {
+                stream.read_exact(&mut header)?;
+                let length = u32::from_be_bytes([0, header[0], header[1], header[2]]);
+                std::io::copy(&mut (&mut stream).take(length.into()), &mut std::io::sink())?;
+                match header[3] {
+                    // SETTINGS: acknowledge the client's.
+                    4 if header[4] & 1 == 0 => stream.write_all(&[0, 0, 0, 4, 1, 0, 0, 0, 0])?,
+                    // HEADERS: a request. Refuse its stream.
+                    1 => {
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        stream
+                            .write_all(&[&[0, 0, 4, 3, 0], &header[5..], &[0, 0, 0, 7]].concat())?;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let timeout = Duration::from_secs(5);
+        let http = HttpClient::new(
+            reqwest::Client::new(),
+            BaseUrl::custom(format!("http://{address}/v1")).unwrap(),
+            Auth::None,
+            "assinafy-test".into(),
+            timeout,
+            timeout,
+            false,
+        );
+        // The production OAuth transport, speaking HTTP/2 without TLS.
+        let oauth = oauth_transport("assinafy-test", timeout, timeout)
+            .http2_prior_knowledge()
+            .build()
+            .unwrap();
+        http.oauth.set(oauth).unwrap();
+        let refresh =
+            crate::resources::TokenRequest::refresh_token("client-id", "sentinel-refresh");
+        assert!(matches!(
+            crate::resources::OAuthApi::new(&http).token(&refresh).await,
+            Err(Error::Http(_))
+        ));
+        // Each refusal was sent before `token` could return: the count is final.
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 }

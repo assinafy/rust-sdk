@@ -505,22 +505,28 @@ fn api_error_derived_deserialize_tolerates_route_not_found_shape() {
 fn document_verification_decodes_string_counts_for_valid_and_invalid() {
     use assinafy::models::DocumentVerification;
 
-    let invalid = r#"{"hash":"INVALID","id":null,"status":null,"page_count":null,
-        "signer_count":null,"completed_count":null,"completed_at":null,
+    let invalid = r#"{"hash":"INVALID","id":null,"agreement_code":null,"status":null,
+        "page_count":null,"signer_count":null,"completed_count":null,"completed_at":null,
         "verified_at":"2026-06-05T20:53:51Z","is_valid":false,
         "message":"Document not signed or not found."}"#;
     let v: DocumentVerification = serde_json::from_str(invalid).unwrap();
     assert!(!v.is_valid);
     assert_eq!(v.hash.as_deref(), Some("INVALID"));
+    assert_eq!(v.agreement_code, None);
     assert_eq!(v.page_count, None);
 
     // The API reports page_count / signer_count as STRINGS.
-    let valid = r#"{"hash":"FE32","id":"63ddb172","status":"certificated",
+    let valid = r#"{"hash":"FE32","id":"63ddb172",
+        "agreement_code":"550E8400-E29B-41D4-A716-446655440000","status":"certificated",
         "page_count":"1","signer_count":"1","completed_count":1,
         "completed_at":"2023-01-27T19:27:44Z","verified_at":"2023-01-27T19:27:46Z",
         "is_valid":true,"message":""}"#;
     let v: DocumentVerification = serde_json::from_str(valid).unwrap();
     assert!(v.is_valid);
+    assert_eq!(
+        v.agreement_code.as_deref(),
+        Some("550E8400-E29B-41D4-A716-446655440000")
+    );
     assert_eq!(v.page_count.as_deref(), Some("1"));
     assert_eq!(v.signer_count.as_deref(), Some("1"));
     assert_eq!(v.completed_count, Some(1));

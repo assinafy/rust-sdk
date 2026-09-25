@@ -196,6 +196,11 @@ impl AuthorizationRequest {
 
     /// Set the opaque `state` value echoed back to the redirect URI. Use it
     /// to bind the callback to the browser session that started the flow.
+    ///
+    /// Generate a new random value for every attempt, as with the PKCE pair.
+    /// In the callback, before anything else, check that `state` equals the
+    /// stored value and `iss` equals `https://auth.assinafy.com.br` — on
+    /// `error=` returns too — and stop if either differs.
     pub fn state<S: Into<String>>(mut self, state: S) -> Self {
         self.state = Some(state.into());
         self
@@ -240,7 +245,7 @@ impl AuthorizationRequest {
     }
 }
 
-/// `POST /oauth/token` request body (RFC 6749 §5.1).
+/// `POST /oauth/token` request body, sent form-encoded (RFC 6749 §4.1.3, §6).
 ///
 /// Build it with [`authorization_code`](Self::authorization_code) or
 /// [`refresh_token`](Self::refresh_token); [`Debug`] redacts every secret it
@@ -269,7 +274,9 @@ impl TokenRequest {
     ///
     /// `redirect_uri` must be byte-identical to the one sent to the
     /// authorization endpoint, and `pkce` must be the pair whose challenge
-    /// started the flow.
+    /// started the flow. The code is single-use and expires 60 seconds after
+    /// approval: exchange it at once, and never retry the exchange
+    /// automatically.
     pub fn authorization_code<C, O, R>(
         client_id: C,
         code: O,
@@ -297,6 +304,29 @@ impl TokenRequest {
     ///
     /// Only a client that requested and was granted
     /// [`scope::OFFLINE_ACCESS`] holds one.
+    ///
+    /// Every refresh returns a **new** refresh token and retires the one sent,
+    /// and sending a retired token again ends the whole connection. So:
+    ///
+    /// - persist [`TokenResponse::refresh_token`] before doing anything else
+    ///   with the response, including using its access token, and stop if
+    ///   that fails;
+    /// - refresh one at a time per connection;
+    /// - after a failure without a definitive answer — a timeout, a dropped
+    ///   connection, a `5xx`, a success without a new refresh token — assume
+    ///   the token sent is retired. Re-read the stored token: carry on only if
+    ///   another worker saved a different one. If it is unchanged, **never
+    ///   send it again**: mark the connection disconnected and send the user
+    ///   through the authorization flow.
+    ///
+    /// Only a failure that provably happened before the request was sent —
+    /// DNS resolution, a refused connection, the TLS handshake: an
+    /// [`Error::Http`] whose [`is_connect`](reqwest::Error::is_connect) is
+    /// true — leaves the token unused and safe to send again.
+    ///
+    /// A refresh token is valid for 30 days, and every refresh returns one
+    /// with a fresh 30 days: a connection expires only after 30 days without
+    /// a refresh.
     pub fn refresh_token<C, T>(client_id: C, refresh_token: T) -> Self
     where
         C: Into<String>,
@@ -315,7 +345,8 @@ impl TokenRequest {
     }
 
     /// Authenticate a confidential client. Public clients authenticate with
-    /// PKCE alone and are never issued a secret.
+    /// PKCE alone and are never issued a secret. Keep the secret on your
+    /// server: never ship it in a mobile, desktop or CLI binary.
     pub fn client_secret<S: Into<String>>(mut self, client_secret: S) -> Self {
         self.client_secret = Some(client_secret.into());
         self
@@ -323,7 +354,7 @@ impl TokenRequest {
 
     /// Set the RFC 8707 `resource` indicator. It must match the value sent to
     /// the authorization endpoint, otherwise the exchange fails with
-    /// `invalid_target`.
+    /// `invalid_target`. A refresh may repeat it but never change it.
     pub fn resource<S: Into<String>>(mut self, resource: S) -> Self {
         self.resource = Some(resource.into());
         self
@@ -354,7 +385,7 @@ impl fmt::Debug for TokenRequest {
     }
 }
 
-/// `POST /oauth/revoke` request body (RFC 7009).
+/// `POST /oauth/revoke` request body, sent form-encoded (RFC 7009 §2.1).
 ///
 /// [`Debug`] redacts the token and the client secret.
 #[derive(Clone, Serialize)]
@@ -439,11 +470,17 @@ impl fmt::Debug for RevokeRequest {
 /// 2. Create a PKCE pair with [`PkceChallenge::generate`] and send the user
 ///    to the URL from [`AuthorizationRequest::url`].
 /// 3. The user approves; the browser returns to your `redirect_uri` with
-///    `?code=…&state=…`.
+///    `?code=…&state=…&iss=…`. Before anything else — on `error=` returns
+///    too — check that `state` equals the value you stored and `iss` equals
+///    `https://auth.assinafy.com.br`; stop if either differs.
 /// 4. Exchange the code with [`OAuthApi::token`] and
 ///    [`TokenRequest::authorization_code`].
-/// 5. Call the API with [`Auth::Bearer`](crate::Auth::Bearer), refresh via
-///    [`TokenRequest::refresh_token`], and revoke with [`OAuthApi::revoke`].
+/// 5. Call the API with [`Auth::Bearer`](crate::Auth::Bearer). The token
+///    reaches one workspace, the only one
+///    [`AccountsApi::list`](crate::resources::AccountsApi::list) returns:
+///    store its id with the tokens. Refresh via
+///    [`TokenRequest::refresh_token`], saving the rotated refresh token
+///    first, and revoke with [`OAuthApi::revoke`].
 ///
 /// ```no_run
 /// use assinafy::Client;
@@ -459,30 +496,35 @@ impl fmt::Debug for RevokeRequest {
 ///     .authorization_server_metadata(&resource.authorization_servers[0])
 ///     .await?;
 ///
-/// // 2. Send the user to the authorization endpoint.
+/// // 2. Send the user to the authorization endpoint, with a new PKCE pair
+/// //    and a new random `state` for every attempt.
 /// let pkce = PkceChallenge::generate()?;
 /// let authorize = AuthorizationRequest::new("my-client-id", "https://app.example/callback", &pkce)
 ///     .scopes([scope::DOCUMENTS_READ, scope::DOCUMENTS_WRITE])
-///     .state("opaque-csrf-token")
+///     .state("random-per-attempt-value")
 ///     .resource(&resource.resource)
 ///     .url(&server.authorization_endpoint)?;
 /// println!("open {authorize}");
 ///
-/// // 4. Exchange the code the browser came back with.
+/// // 4. Once `state` and `iss` check out, exchange the code the browser came
+/// //    back with, repeating the `resource` sent in step 2.
 /// let token = client
 ///     .oauth()
-///     .token(&TokenRequest::authorization_code(
-///         "my-client-id",
-///         "code-from-the-redirect",
-///         "https://app.example/callback",
-///         &pkce,
-///     ))
+///     .token(
+///         &TokenRequest::authorization_code(
+///             "my-client-id",
+///             "code-from-the-redirect",
+///             "https://app.example/callback",
+///             &pkce,
+///         )
+///         .resource(&resource.resource),
+///     )
 ///     .await?;
 ///
 /// // 5. Use it.
 /// let api = client.with_auth(assinafy::Auth::Bearer(token.access_token.clone()));
-/// let who = api.oauth().userinfo().await?;
-/// println!("acting for {}", who.sub);
+/// let workspace = &api.accounts_api().list().await?[0].id;
+/// println!("connected to workspace {workspace}");
 /// # Ok(()) }
 /// ```
 ///
@@ -592,14 +634,15 @@ impl<'a> OAuthApi<'a> {
     ///
     /// # Request payload
     ///
-    /// ```json
-    /// {
-    ///   "grant_type": "authorization_code",
-    ///   "code": "example-redacted-authorization-code",
-    ///   "redirect_uri": "https://app.example.invalid/callback",
-    ///   "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
-    ///   "client_id": "my-client-id"
-    /// }
+    /// Sent as `application/x-www-form-urlencoded`; line breaks added for
+    /// readability.
+    ///
+    /// ```text
+    /// grant_type=authorization_code
+    /// &code=example-redacted-authorization-code
+    /// &redirect_uri=https%3A%2F%2Fapp.example.invalid%2Fcallback
+    /// &code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+    /// &client_id=my-client-id
     /// ```
     ///
     /// # Response payload
@@ -624,15 +667,45 @@ impl<'a> OAuthApi<'a> {
     /// [`Error::Api`](crate::Error::Api) with the code available from
     /// [`ApiError::oauth_error`](crate::ApiError::oauth_error): `invalid_grant`
     /// (bad, expired, replayed or wrong-client code; a `code_verifier` outside
-    /// the RFC 7636 grammar; a `redirect_uri` mismatch; a refresh token whose
-    /// authorization no longer includes `offline_access`), `invalid_target`,
-    /// `unsupported_grant_type`, or `invalid_client` on a `401`.
+    /// the RFC 7636 grammar; a `redirect_uri` mismatch; a refresh token that
+    /// was already used, went 30 days without a refresh, or was retired
+    /// because the user approved the app again with different permissions),
+    /// `invalid_target`, `unsupported_grant_type`, or `invalid_client` on a
+    /// `401`. `invalid_grant` on a refresh means the connection is over: mark
+    /// it disconnected and send the user through the authorization flow
+    /// again instead of retrying.
+    ///
+    /// A refresh that succeeds without a new refresh token — `refresh_token`
+    /// missing, empty, or the one just sent — is rejected with
+    /// [`Error::UnexpectedResponse`]: the token sent is retired, so handle it
+    /// like any failure without a definitive answer (see
+    /// [`TokenRequest::refresh_token`]).
+    ///
+    /// # Transport
+    ///
+    /// The request is sent exactly once. It always goes through an SDK-owned
+    /// transport, whatever [`ClientBuilder::http_client`](crate::ClientBuilder::http_client)
+    /// supplied, that never follows a redirect — a `3xx` surfaces as
+    /// [`Error::Api`](crate::Error::Api) — and never resends a request, not
+    /// even the HTTP/2 refusals reqwest otherwise retries.
     pub async fn token(&self, body: &TokenRequest) -> Result<TokenResponse> {
-        let req = self
-            .http
-            .request_public(Method::POST, "oauth/token")?
-            .json(body);
-        self.http.send_data(req).await
+        let req = self.http.request_oauth("oauth/token")?.form(body);
+        let token: TokenResponse = self.http.send_data(req).await?;
+        // A refresh retires the token it sends, so a success without a
+        // different successor leaves the caller holding a dead token.
+        let sent = body.refresh_token.as_deref();
+        if sent.is_some()
+            && token
+                .refresh_token
+                .as_deref()
+                .is_none_or(|next| next.is_empty() || Some(next) == sent)
+        {
+            return Err(Error::UnexpectedResponse(
+                "refresh succeeded without a new refresh token; the one sent may be retired, so never send it again"
+                    .into(),
+            ));
+        }
+        Ok(token)
     }
 
     /// Revoke an access or refresh token.
@@ -643,24 +716,27 @@ impl<'a> OAuthApi<'a> {
     /// exists. Only failed client authentication returns `401`
     /// `invalid_client`.
     ///
+    /// When a user disconnects, revoke their current refresh token, then
+    /// delete the stored tokens.
+    ///
     /// # Request payload
     ///
-    /// ```json
-    /// {
-    ///   "token": "example-redacted-refresh-token",
-    ///   "token_type_hint": "refresh_token",
-    ///   "client_id": "my-client-id"
-    /// }
+    /// Sent as `application/x-www-form-urlencoded`.
+    ///
+    /// ```text
+    /// token=example-redacted-refresh-token&token_type_hint=refresh_token&client_id=my-client-id
     /// ```
     ///
     /// # Response payload
     ///
     /// Empty.
+    ///
+    /// # Transport
+    ///
+    /// Sent like [`token`](Self::token): exactly once, through the SDK-owned
+    /// transport, never following a redirect.
     pub async fn revoke(&self, body: &RevokeRequest) -> Result<()> {
-        let req = self
-            .http
-            .request_public(Method::POST, "oauth/revoke")?
-            .json(body);
+        let req = self.http.request_oauth("oauth/revoke")?.form(body);
         self.http.send_no_content(req).await
     }
 
@@ -825,6 +901,187 @@ mod tests {
                 "client_secret": "shh"
             })
         );
+    }
+
+    /// Read one HTTP/1.1 request, headers and `Content-Length` body.
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = stream.read(&mut chunk).unwrap();
+            request.extend_from_slice(&chunk[..read]);
+            let text = String::from_utf8_lossy(&request).into_owned();
+            let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                assert_ne!(read, 0, "connection closed mid-headers");
+                continue;
+            };
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            if body.len() >= length || read == 0 {
+                return text;
+            }
+        }
+    }
+
+    /// Answer one connection per entry, in order, and return the requests
+    /// read. `None` reads the request and hangs up without answering.
+    fn serve(
+        answers: Vec<Option<String>>,
+    ) -> (std::net::SocketAddr, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            answers
+                .into_iter()
+                .map(|answer| {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let request = read_request(&mut stream);
+                    if let Some(answer) = answer {
+                        stream.write_all(answer.as_bytes()).unwrap();
+                    }
+                    request
+                })
+                .collect()
+        });
+        (address, server)
+    }
+
+    fn local_client(address: std::net::SocketAddr) -> crate::ClientBuilder {
+        crate::Client::builder()
+            .base_url(crate::BaseUrl::custom(format!("http://{address}/v1")).unwrap())
+            .timeout(std::time::Duration::from_secs(5))
+    }
+
+    #[tokio::test]
+    async fn token_and_revoke_post_forms_and_an_unanswered_refresh_is_not_resent() {
+        // The refresh gets no answer, so the client cannot tell whether the
+        // token rotated; the revocation is answered.
+        let (address, server) = serve(vec![
+            None,
+            Some("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()),
+        ]);
+        let client = local_client(address).build().unwrap();
+        let refresh =
+            TokenRequest::refresh_token("client-id", "sentinel-refresh").client_secret("shh");
+        assert!(matches!(
+            client.oauth().token(&refresh).await,
+            Err(Error::Http(_))
+        ));
+        client
+            .oauth()
+            .revoke(&RevokeRequest::refresh_token(
+                "client-id",
+                "sentinel-refresh",
+            ))
+            .await
+            .unwrap();
+
+        // The connection after the unanswered refresh carries the revocation:
+        // the refresh, whose token may already be retired, was sent once.
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("POST /v1/oauth/token "));
+        assert!(requests[0].ends_with(
+            "\r\n\r\ngrant_type=refresh_token&refresh_token=sentinel-refresh&client_id=client-id&client_secret=shh"
+        ));
+        assert!(requests[1].starts_with("POST /v1/oauth/revoke "));
+        assert!(requests[1].ends_with(
+            "\r\n\r\ntoken=sentinel-refresh&token_type_hint=refresh_token&client_id=client-id"
+        ));
+        for request in &requests {
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("\r\ncontent-type: application/x-www-form-urlencoded\r\n"),
+                "{request}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refresh_without_a_new_refresh_token_is_rejected() {
+        let ok = |body: &str| {
+            Some(format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ))
+        };
+        let (address, server) = serve(vec![
+            ok(r#"{"access_token":"sentinel-access","token_type":"Bearer"}"#),
+            ok(r#"{"access_token":"sentinel-access","refresh_token":""}"#),
+            ok(r#"{"access_token":"sentinel-access","refresh_token":"sentinel-refresh"}"#),
+            ok(r#"{"access_token":"sentinel-access","refresh_token":"sentinel-next"}"#),
+            ok(r#"{"access_token":"sentinel-access"}"#),
+        ]);
+        let client = local_client(address).build().unwrap();
+        let refresh = TokenRequest::refresh_token("client-id", "sentinel-refresh");
+
+        // Missing, empty, and the very token sent: none is a usable successor.
+        for _ in 0..3 {
+            let error = client.oauth().token(&refresh).await.unwrap_err();
+            let rendered = format!("{error} {error:?}");
+            assert!(matches!(error, Error::UnexpectedResponse(_)), "{rendered}");
+            assert!(!rendered.contains("sentinel"), "{rendered}");
+        }
+        let rotated = client.oauth().token(&refresh).await.unwrap();
+        assert_eq!(rotated.refresh_token.as_deref(), Some("sentinel-next"));
+        // A code exchange owes no refresh token: one comes only with
+        // `offline_access`.
+        let pkce = PkceChallenge::from_verifier("a".repeat(43)).unwrap();
+        let code = TokenRequest::authorization_code(
+            "client-id",
+            "code",
+            "https://app.example.invalid/cb",
+            &pkce,
+        );
+        let exchanged = client.oauth().token(&code).await.unwrap();
+        assert!(exchanged.refresh_token.is_none());
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn token_and_revoke_never_follow_redirects_even_on_a_custom_client() {
+        // Where a followed 307/308 would resend the form, secrets included.
+        let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let target = trap.local_addr().unwrap();
+        let redirect = |status: &str| {
+            Some(format!(
+                "HTTP/1.1 {status}\r\nLocation: http://{target}/v1/oauth/token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ))
+        };
+        let (address, server) = serve(vec![
+            redirect("307 Temporary Redirect"),
+            redirect("307 Temporary Redirect"),
+            redirect("308 Permanent Redirect"),
+            redirect("308 Permanent Redirect"),
+        ]);
+        // Reqwest's default policy follows 307 and 308, body and all.
+        let custom = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let client = local_client(address).http_client(custom).build().unwrap();
+        let refresh = TokenRequest::refresh_token("client-id", "sentinel-refresh")
+            .client_secret("sentinel-secret");
+        let revoke = RevokeRequest::refresh_token("client-id", "sentinel-refresh");
+
+        for status in [307, 308] {
+            let error = client.oauth().token(&refresh).await.unwrap_err();
+            assert_eq!(error.status(), Some(status), "{error}");
+            let error = client.oauth().revoke(&revoke).await.unwrap_err();
+            assert_eq!(error.status(), Some(status), "{error}");
+        }
+        // One request per call, and none reached the redirect target.
+        assert_eq!(server.join().unwrap().len(), 4);
+        trap.set_nonblocking(true).unwrap();
+        assert!(trap.accept().is_err(), "a redirect was followed");
     }
 
     #[test]
