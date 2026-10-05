@@ -25,7 +25,7 @@ pub enum NotificationSenderType {
 /// ```json
 /// {
 ///   "id": "acc_1234567890abcdef12345678",
-///   "name": "Acme Inc.",
+///   "name": "Example Workspace",
 ///   "roles": ["owner"],
 ///   "is_delete_allowed": true,
 ///   "created_at": "2026-05-12T18:05:11Z"
@@ -38,7 +38,7 @@ pub enum NotificationSenderType {
 /// {
 ///   "resource": "account",
 ///   "id": "acc_1234567890abcdef12345678",
-///   "name": "Acme Inc.",
+///   "name": "Example Workspace",
 ///   "primary_color": null,
 ///   "secondary_color": null,
 ///   "notification_sender_type": "User",
@@ -87,7 +87,7 @@ pub struct Account {
 ///
 /// ```json
 /// {
-///   "account_name": "Acme Inc.",
+///   "account_name": "Example Workspace",
 ///   "primary_color": "2072b9",
 ///   "secondary_color": "ffffff",
 ///   "logo": null

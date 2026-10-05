@@ -213,13 +213,18 @@ impl<'a> AccountsApi<'a> {
     ///
     /// `GET /accounts`. Returns a flat array (this endpoint is not paginated).
     ///
+    /// # Request payload
+    ///
+    /// No request body or query parameters. The credential determines which
+    /// accounts are visible.
+    ///
     /// # Response payload
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
     ///   {
     ///     "id": "102d25a4a1b2c3d4e5f60718",
-    ///     "name": "Acme Inc.",
+    ///     "name": "Example Workspace",
     ///     "roles": ["owner"],
     ///     "is_delete_allowed": true,
     ///     "created_at": "2026-05-12T18:05:11Z"
@@ -238,7 +243,7 @@ impl<'a> AccountsApi<'a> {
     /// # Request payload
     ///
     /// ```json
-    /// { "name": "Acme Inc.", "notification_sender_type": "Account" }
+    /// { "name": "Example Workspace", "notification_sender_type": "Account" }
     /// ```
     ///
     /// # Response payload
@@ -247,7 +252,7 @@ impl<'a> AccountsApi<'a> {
     /// { "status": 200, "message": "", "data": {
     ///   "resource": "account",
     ///   "id": "102d25a4a1b2c3d4e5f60718",
-    ///   "name": "Acme Inc.",
+    ///   "name": "Example Workspace",
     ///   "primary_color": null,
     ///   "secondary_color": null,
     ///   "notification_sender_type": "Account",
@@ -280,12 +285,16 @@ impl<'a> AccountApi<'a> {
     ///
     /// `GET /accounts/{account_id}`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
     ///   "resource": "account",
-    ///   "id": "102d25a4a1b2c3d4e5f60718", "name": "Acme Inc.",
+    ///   "id": "102d25a4a1b2c3d4e5f60718", "name": "Example Workspace",
     ///   "primary_color": null, "secondary_color": null,
     ///   "notification_sender_type": "User",
     ///   "created_at": "2026-05-12T18:05:11Z" } }
@@ -329,6 +338,10 @@ impl<'a> AccountApi<'a> {
     /// lists the blockers. Use [`delete_forcing`](Self::delete_forcing) to
     /// cancel any active subscription and delete immediately.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -370,11 +383,15 @@ impl<'a> AccountApi<'a> {
     ///
     /// `GET /accounts/{account_id}/theme`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": {
-    ///   "account_name": "Acme Inc.", "primary_color": "2072b9",
+    ///   "account_name": "Example Workspace", "primary_color": "2072b9",
     ///   "secondary_color": "ffffff", "logo": null } }
     /// ```
     pub async fn theme(&self) -> Result<AccountTheme> {
@@ -393,6 +410,15 @@ impl<'a> AccountApi<'a> {
     /// available on production only.
     ///
     /// # Request parameters
+    ///
+    /// ```json
+    /// { "granularity": "daily", "month": "2026-06" }
+    /// ```
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
     ///
     /// ```json
     /// { "granularity": "daily", "month": "2026-06" }
@@ -436,6 +462,23 @@ impl<'a> AccountApi<'a> {
     /// The response is the raw logo image (`image/png` or `image/jpeg`), not a
     /// JSON envelope. The returned tuple contains the bytes and the response
     /// `Content-Type` header.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
+    /// # Response payload
+    ///
+    /// Raw binary bytes; the response is not a JSON envelope. The returned tuple
+    /// contains the bytes and the server's `Content-Type` (or
+    /// `application/octet-stream` when absent).
+    ///
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: image/png
+    ///
+    /// <artifact bytes>
+    /// ```
     pub async fn download_logo(&self) -> Result<(Bytes, String)> {
         let path = self
             .http
@@ -456,6 +499,17 @@ impl<'a> AccountApi<'a> {
     /// # Ok(()) }
     /// ```
     ///
+    /// # Request payload
+    ///
+    /// Multipart form (`multipart/form-data`) with a binary `file` part.
+    ///
+    /// ```text
+    /// Content-Disposition: form-data; name="file"; filename="example.png"
+    /// Content-Type: image/png
+    ///
+    /// <file bytes>
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -473,6 +527,10 @@ impl<'a> AccountApi<'a> {
     /// Delete the account logo image.
     ///
     /// `DELETE /accounts/{account_id}/logo`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///

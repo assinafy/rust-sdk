@@ -108,6 +108,10 @@ impl<'a> ApiKeysApi<'a> {
     ///
     /// `GET /users/api-keys`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -130,6 +134,10 @@ impl<'a> ApiKeysApi<'a> {
     /// Delete the current API key.
     ///
     /// `DELETE /users/api-keys`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///

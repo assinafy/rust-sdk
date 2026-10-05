@@ -11,7 +11,8 @@ pub enum Auth {
     /// API key sent as `X-Api-Key`. Use for server-to-server integrations.
     ApiKey(String),
     /// Bearer token sent as `Authorization: Bearer <token>`. Returned by
-    /// [`AuthApi::login`](crate::resources::AuthApi::login).
+    /// [`AuthApi::login`](crate::resources::AuthApi::login) or
+    /// [`OAuthApi::token`](crate::resources::OAuthApi::token).
     Bearer(String),
     /// Bearer token sent as the `?access-token=<token>` query parameter.
     ///

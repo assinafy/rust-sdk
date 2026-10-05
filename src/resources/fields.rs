@@ -218,6 +218,15 @@ impl<'a> ListFieldsRequest<'a> {
     /// `GET /accounts/{account_id}/fields`. Returns a bare (non-paginated)
     /// array of field definitions.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// { "include_inactive": false, "include_standard": true }
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -329,6 +338,10 @@ impl<'a> FieldsApi<'a> {
     ///
     /// `GET /accounts/{account_id}/fields/{field_id}`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -414,6 +427,10 @@ impl<'a> FieldsApi<'a> {
     /// Delete a field definition.
     ///
     /// `DELETE /accounts/{account_id}/fields/{field_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -540,6 +557,10 @@ impl<'a> FieldsApi<'a> {
     /// List supported field types.
     ///
     /// `GET /field-types`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///

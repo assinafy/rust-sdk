@@ -14,7 +14,7 @@ async fn main() -> assinafy::Result<()> {
 
     let client = Client::builder().api_key(api_key).build()?;
 
-    let body = CreateSignerBody::new("Jane Doe").email("user@example.invalid");
+    let body = CreateSignerBody::new("Maria Silva").email("user@example.invalid");
 
     let signer = client.signers(&account_id).create(&body).await?;
     println!("created signer: {} ({})", signer.full_name, signer.id);

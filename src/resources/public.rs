@@ -9,10 +9,8 @@ use crate::models::PublicDocument;
 
 /// Body for `PUT /public/documents/{document_id}/send-token`.
 ///
-/// Both fields are required by the live API. The published OpenAPI document
-/// describes a single `email` field instead; that shape is rejected with
-/// `400 O atributo "channel" é obrigatório.` on production,
-/// so the SDK follows the live contract.
+/// Both `recipient` and `channel` are required. The recipient must belong to
+/// a signer on the document; the channel is `email` or `whatsapp`.
 ///
 /// ```
 /// # use assinafy::resources::SendTokenBody;
@@ -89,6 +87,10 @@ impl<'a> PublicApi<'a> {
     ///
     /// `GET /public/documents/{document_id}`. Requires no authentication.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -162,8 +164,6 @@ mod tests {
 
     #[test]
     fn send_token_bodies_carry_the_channel_the_api_requires() {
-        // Omitting `channel` is what the published spec describes, and what
-        // the live API rejects with `400 O atributo "channel" é obrigatório.`
         for (body, expected_channel) in [
             (SendTokenBody::email("user@example.invalid"), "email"),
             (SendTokenBody::whatsapp("+5511999999999"), "whatsapp"),

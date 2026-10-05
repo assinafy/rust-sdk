@@ -18,7 +18,7 @@ use crate::pagination::Page;
 ///
 /// ```json
 /// {
-///   "full_name": "John Dove",
+///   "full_name": "Maria Silva",
 ///   "email": "user@example.invalid",
 ///   "whatsapp_phone_number": "+5548999990000"
 /// }
@@ -70,7 +70,7 @@ impl CreateSignerBody {
 ///
 /// ```json
 /// {
-///   "full_name": "John Dove",
+///   "full_name": "Maria Silva",
 ///   "email": "user@example.invalid",
 ///   "whatsapp_phone_number": "+5548999990000",
 ///   "government_id": "39053344705"
@@ -162,6 +162,15 @@ impl<'a> ListSignersRequest<'a> {
 
     /// Execute the request.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"page": 1, "per-page": 20, "search": "Maria", "sort": "-created_at"}
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -171,7 +180,7 @@ impl<'a> ListSignersRequest<'a> {
     ///   "data": [
     ///     {
     ///       "id": "19e6b92e7895332ed9708535d8c",
-    ///       "full_name": "Bill M",
+    ///       "full_name": "Maria Silva",
     ///       "email": "user@example.invalid",
     ///       "whatsapp_phone_number": null,
     ///       "has_accepted_terms": false
@@ -222,7 +231,7 @@ impl<'a> SignersApi<'a> {
     ///
     /// ```json
     /// {
-    ///   "full_name": "John Dove",
+    ///   "full_name": "Maria Silva",
     ///   "email": "user@example.invalid",
     ///   "whatsapp_phone_number": "+5548999990000"
     /// }
@@ -237,7 +246,7 @@ impl<'a> SignersApi<'a> {
     ///   "data": {
     ///     "resource": "signer",
     ///     "id": "19f805d5a8319e0a753d92a9f4f",
-    ///     "full_name": "John Dove",
+    ///     "full_name": "Maria Silva",
     ///     "email": "user@example.invalid",
     ///     "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false
@@ -269,6 +278,10 @@ impl<'a> SignersApi<'a> {
     /// Retrieve a single signer.
     ///
     /// `GET /accounts/{account_id}/signers/{signer_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -305,7 +318,7 @@ impl<'a> SignersApi<'a> {
     ///
     /// ```json
     /// {
-    ///   "full_name": "John Dove Renamed"
+    ///   "full_name": "Maria Silva Atualizada"
     /// }
     /// ```
     ///
@@ -318,7 +331,7 @@ impl<'a> SignersApi<'a> {
     ///   "data": {
     ///     "resource": "signer",
     ///     "id": "19f805d5a8319e0a753d92a9f4f",
-    ///     "full_name": "John Dove Renamed",
+    ///     "full_name": "Maria Silva Atualizada",
     ///     "email": "user@example.invalid",
     ///     "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false
@@ -343,6 +356,10 @@ impl<'a> SignersApi<'a> {
     /// Delete a signer.
     ///
     /// `DELETE /accounts/{account_id}/signers/{signer_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///

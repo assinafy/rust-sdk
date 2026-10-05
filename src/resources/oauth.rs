@@ -157,6 +157,7 @@ pub struct AuthorizationRequest {
     code_challenge: String,
     scopes: Vec<String>,
     state: Option<String>,
+    nonce: Option<String>,
     resource: Option<String>,
 }
 
@@ -174,6 +175,7 @@ impl AuthorizationRequest {
             code_challenge: pkce.challenge().to_owned(),
             scopes: Vec::new(),
             state: None,
+            nonce: None,
             resource: None,
         }
     }
@@ -203,6 +205,14 @@ impl AuthorizationRequest {
     /// `error=` returns too — and stop if either differs.
     pub fn state<S: Into<String>>(mut self, state: S) -> Self {
         self.state = Some(state.into());
+        self
+    }
+
+    /// Bind an OpenID Connect ID token to this authorization attempt.
+    /// Generate a fresh random nonce, store it with the browser session, and
+    /// check its claim when validating the ID token's signature and claims.
+    pub fn nonce<S: Into<String>>(mut self, nonce: S) -> Self {
+        self.nonce = Some(nonce.into());
         self
     }
 
@@ -237,6 +247,9 @@ impl AuthorizationRequest {
             if let Some(state) = &self.state {
                 query.append_pair("state", state);
             }
+            if let Some(nonce) = &self.nonce {
+                query.append_pair("nonce", nonce);
+            }
             if let Some(resource) = &self.resource {
                 query.append_pair("resource", resource);
             }
@@ -248,7 +261,8 @@ impl AuthorizationRequest {
 /// `POST /oauth/token` request body, sent form-encoded (RFC 6749 §4.1.3, §6).
 ///
 /// Build it with [`authorization_code`](Self::authorization_code) or
-/// [`refresh_token`](Self::refresh_token); [`Debug`] redacts every secret it
+/// [`refresh_token`](Self::refresh_token), or [`token_exchange`](Self::token_exchange);
+/// [`Debug`] redacts every secret it
 /// carries.
 #[derive(Clone, Serialize)]
 pub struct TokenRequest {
@@ -261,6 +275,12 @@ pub struct TokenRequest {
     code_verifier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject_token_type: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_token_type: Option<String>,
     client_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     client_secret: Option<String>,
@@ -294,6 +314,9 @@ impl TokenRequest {
             redirect_uri: Some(redirect_uri.into()),
             code_verifier: Some(pkce.verifier().to_owned()),
             refresh_token: None,
+            subject_token: None,
+            subject_token_type: None,
+            requested_token_type: None,
             client_id: client_id.into(),
             client_secret: None,
             resource: None,
@@ -338,10 +361,80 @@ impl TokenRequest {
             redirect_uri: None,
             code_verifier: None,
             refresh_token: Some(refresh_token.into()),
+            subject_token: None,
+            subject_token_type: None,
+            requested_token_type: None,
             client_id: client_id.into(),
             client_secret: None,
             resource: None,
         }
+    }
+
+    /// Exchange a front-end resource's access token for an API access token
+    /// (RFC 8693). Only confidential internal-service clients may use this
+    /// grant; ordinary public and confidential applications receive
+    /// `invalid_client` and should use the authorization-code flow instead.
+    ///
+    /// `resource` must be this API's protected-resource identifier. The
+    /// subject must be a live, original token for another Assinafy resource.
+    /// The result has no refresh token and cannot outlive the subject token.
+    ///
+    /// # Request payload
+    ///
+    /// Sent form-encoded by [`OAuthApi::token`]; the logical fields are:
+    ///
+    /// ```json
+    /// {
+    ///   "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    ///   "client_id": "example-redacted-service-client",
+    ///   "client_secret": "example-redacted-client-secret",
+    ///   "subject_token": "example-redacted-subject-token",
+    ///   "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    ///   "resource": "https://api.assinafy.com.br"
+    /// }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// A flat [`TokenResponse`], with `issued_token_type` and no refresh token.
+    ///
+    /// ```json
+    /// {
+    ///   "access_token": "example-redacted-access-token",
+    ///   "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    ///   "token_type": "Bearer",
+    ///   "expires_in": 300,
+    ///   "scope": "documents:read"
+    /// }
+    /// ```
+    pub fn token_exchange(
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+        subject_token: impl Into<String>,
+        resource: impl Into<String>,
+    ) -> Self {
+        Self {
+            grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            subject_token: Some(subject_token.into()),
+            subject_token_type: Some("urn:ietf:params:oauth:token-type:access_token"),
+            requested_token_type: None,
+            client_id: client_id.into(),
+            client_secret: Some(client_secret.into()),
+            resource: Some(resource.into()),
+        }
+    }
+
+    /// Specify the token type requested during internal-service token exchange.
+    /// The only supported value is
+    /// `urn:ietf:params:oauth:token-type:access_token`; omitting it requests the
+    /// same type. Other values are rejected by the server.
+    pub fn requested_token_type(mut self, token_type: impl Into<String>) -> Self {
+        self.requested_token_type = Some(token_type.into());
+        self
     }
 
     /// Authenticate a confidential client. Public clients authenticate with
@@ -380,6 +473,12 @@ impl fmt::Debug for TokenRequest {
                 "client_secret",
                 &self.client_secret.as_ref().map(|_| "**redacted**"),
             )
+            .field(
+                "subject_token",
+                &self.subject_token.as_ref().map(|_| "**redacted**"),
+            )
+            .field("subject_token_type", &self.subject_token_type)
+            .field("requested_token_type", &self.requested_token_type)
             .field("resource", &self.resource)
             .finish()
     }
@@ -501,7 +600,7 @@ impl fmt::Debug for RevokeRequest {
 /// let pkce = PkceChallenge::generate()?;
 /// let authorize = AuthorizationRequest::new("my-client-id", "https://app.example/callback", &pkce)
 ///     .scopes([scope::DOCUMENTS_READ, scope::DOCUMENTS_WRITE])
-///     .state("random-per-attempt-value")
+///     .state(PkceChallenge::generate()?.verifier())
 ///     .resource(&resource.resource)
 ///     .url(&server.authorization_endpoint)?;
 /// println!("open {authorize}");
@@ -549,6 +648,10 @@ impl<'a> OAuthApi<'a> {
     /// lives at the API **origin**, not under the versioned base path, and is
     /// unauthenticated.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// Per RFC 8615 the body is the bare metadata object, not this API's
@@ -584,6 +687,10 @@ impl<'a> OAuthApi<'a> {
     /// [`ProtectedResourceMetadata::authorization_servers`]; the request goes
     /// to that host, which is **not** the API host, and carries no
     /// credentials.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -626,7 +733,8 @@ impl<'a> OAuthApi<'a> {
         self.http.send_data(req).await
     }
 
-    /// Exchange an authorization code or a refresh token for an access token.
+    /// Exchange an authorization code, refresh token, or internal-service
+    /// subject token for an access token.
     ///
     /// `POST /oauth/token`. Unauthenticated: the client identifies itself in
     /// the body, with PKCE (public clients) or a client secret (confidential
@@ -748,6 +856,10 @@ impl<'a> OAuthApi<'a> {
     /// client carrying the OAuth token — see
     /// [`Client::with_auth`](crate::Client::with_auth).
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// Per OIDC Core §5.3.2 the body is a flat claims object, not enveloped.
@@ -769,6 +881,44 @@ impl<'a> OAuthApi<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_exchange_serializes_the_service_grant_and_redacts_its_secrets() {
+        let request = TokenRequest::token_exchange(
+            "service-client",
+            "sentinel-service-secret",
+            "sentinel-subject-token",
+            "https://api.assinafy.com.br",
+        )
+        .requested_token_type("urn:ietf:params:oauth:token-type:access_token");
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            serde_json::json!({
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "client_id": "service-client",
+                "client_secret": "sentinel-service-secret",
+                "subject_token": "sentinel-subject-token",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "resource": "https://api.assinafy.com.br",
+                "requested_token_type": "urn:ietf:params:oauth:token-type:access_token"
+            })
+        );
+        let rendered = format!("{request:?}");
+        assert!(!rendered.contains("sentinel-service-secret"));
+        assert!(!rendered.contains("sentinel-subject-token"));
+        let response: TokenResponse = serde_json::from_value(serde_json::json!({
+            "access_token": "example-redacted-access-token",
+            "token_type": "Bearer",
+            "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "scope": "documents:read"
+        }))
+        .unwrap();
+        assert_eq!(response.refresh_token, None);
+        assert_eq!(
+            response.issued_token_type.as_deref(),
+            Some("urn:ietf:params:oauth:token-type:access_token")
+        );
+    }
 
     #[test]
     fn base64url_matches_rfc_4648_vectors_without_padding() {
@@ -832,6 +982,7 @@ mod tests {
         let url = AuthorizationRequest::new("client-id", "https://app.example.invalid/cb", &pkce)
             .scopes([scope::DOCUMENTS_READ, scope::WEBHOOKS_WRITE, scope::OPENID])
             .state("csrf-state")
+            .nonce("oidc-nonce")
             .resource("https://api.assinafy.com.br")
             .url("https://auth.assinafy.com.br/oauth/authorize")
             .unwrap();
@@ -845,6 +996,7 @@ mod tests {
         assert_eq!(query["code_challenge_method"], "S256");
         assert_eq!(query["scope"], "documents:read webhooks:write openid");
         assert_eq!(query["state"], "csrf-state");
+        assert_eq!(query["nonce"], "oidc-nonce");
         assert_eq!(query["resource"], "https://api.assinafy.com.br");
     }
 

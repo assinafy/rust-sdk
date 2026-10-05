@@ -829,4 +829,15 @@ async fn oauth_token_endpoint_reports_rfc_6749_error_codes() {
         !error.to_string().is_empty(),
         "the error_description must reach Error::Display"
     );
+    let error = client
+        .oauth()
+        .token(&TokenRequest::token_exchange(
+            "rust-sdk-nonexistent-client",
+            "example-redacted-client-secret",
+            "example-redacted-subject-token",
+            "https://api.assinafy.com.br",
+        ))
+        .await
+        .expect_err("an unknown service client must not receive a token");
+    assert_eq!(error.oauth_error(), Some("invalid_client"));
 }

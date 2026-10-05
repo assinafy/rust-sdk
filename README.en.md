@@ -42,12 +42,13 @@ keys, OAuth 2.1, and the signer-facing endpoints.
 ## Install
 
 Requires Rust 1.86 or newer and uses the Rust 2024 edition. CI tests both the declared 1.86
-minimum and the current stable release; Rust has no LTS channel. The default HTTP client requires TLS 1.2 or newer.
+minimum and the current stable release; Rust has no LTS channel. The default HTTP client requires
+TLS 1.2 or newer.
 
 ```toml
 [dependencies]
 assinafy = "3"
-tokio    = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio    = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 ```
 
 ## Quick start
@@ -151,6 +152,20 @@ resulting token carries only the scopes the user approved, works for one workspa
 never reach billing, account lifecycle, credential management or admin surfaces, whatever its
 scopes.
 
+Register the app at [Assinafy](https://app.assinafy.com.br), under **Settings → OAuth applications →
+New application**. The owning workspace requires an eligible plan and its owner must register the
+app. Choose only the permissions the app needs. Register an HTTPS callback URI for each environment;
+matching is exact, including a trailing slash. Local development needs an HTTPS tunnel. Choose
+**Confidential** for a server that can protect a secret, or **Public** for a client that cannot.
+Confidential clients add `.client_secret(secret)` to every token and revocation request.
+
+Store each connection by your application user and Assinafy workspace, with the granted scopes,
+expiry and encrypted tokens. Keep PKCE and random state in the initiating browser session, expire
+them after the attempt, and reject duplicate callback parameters. Codes expire after 60 seconds and
+can be exchanged once. The SDK returns the `id_token` without verifying it: an OpenID Connect
+library must validate its signature using the discovery `jwks_uri`, issuer, audience, expiry and any
+nonce supplied through `.nonce(value)`.
+
 The flow is the authorization-code grant with **mandatory** PKCE (S256). The SDK covers every
 step except the browser redirect:
 
@@ -187,9 +202,10 @@ async fn authorize(client_id: &str, redirect_uri: &str) -> assinafy::Result<()> 
 
     // 2. A new PKCE pair and `state` for every attempt; keep both until the callback.
     let pkce = PkceChallenge::generate()?;
+    let state = PkceChallenge::generate()?.verifier().to_owned();
     let url = AuthorizationRequest::new(client_id, redirect_uri, &pkce)
-        .scopes([scope::DOCUMENTS_READ, scope::DOCUMENTS_WRITE, scope::OPENID])
-        .state("random-per-attempt-value")
+        .scopes([scope::DOCUMENTS_READ, scope::ACCOUNT_READ, scope::OPENID, scope::OFFLINE_ACCESS])
+        .state(&state)
         .resource(&resource.resource)
         .url(&server.authorization_endpoint)?;
     println!("open {url}");
@@ -218,6 +234,11 @@ async fn authorize(client_id: &str, redirect_uri: &str) -> assinafy::Result<()> 
     Ok(())
 }
 ```
+
+For internal Assinafy services, `TokenRequest::token_exchange` supports the RFC 8693 grant,
+with optional `.requested_token_type("urn:ietf:params:oauth:token-type:access_token")`.
+Its response exposes `issued_token_type` and has no refresh token. Ordinary applications
+receive `invalid_client` for this grant and use the authorization-code flow above.
 
 Available scopes (constants in `assinafy::resources::scope`):
 
@@ -397,10 +418,22 @@ async fn sign_a_contract() -> assinafy::Result<()> {
     let document = client.documents().upload(&account, file).await?;
 
     // 3. Signatures can only be requested from `metadata_ready` onward.
-    let ready = client.documents().get(&document.id).await?;
-    if !matches!(ready.status, DocumentStatus::MetadataReady) {
-        println!("still processing: {}", ready.status);
-        return Ok(());
+    let mut ready = false;
+    for _ in 0..30 {
+        let current = client.documents().get(&document.id).await?;
+        if matches!(current.status, DocumentStatus::MetadataReady) {
+            ready = true;
+            break;
+        }
+        if !matches!(current.status, DocumentStatus::Uploading | DocumentStatus::Uploaded | DocumentStatus::MetadataProcessing) {
+            return Err(assinafy::Error::UnexpectedResponse(format!(
+                "document processing stopped: {}", current.status
+            )));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    if !ready {
+        return Err(assinafy::Error::UnexpectedResponse("document metadata timed out".into()));
     }
 
     // 4–5. Request the signatures. `Virtual` notifies remotely; `Collect`
@@ -413,9 +446,13 @@ async fn sign_a_contract() -> assinafy::Result<()> {
 
     let cost = client
         .assignments()
-        .estimate_cost(&document.id, &request.clone().into())
+        .estimate_cost(&document.id, &request)
         .await?;
     println!("estimated cost: {} credits", cost.total_credits);
+
+    if !cost.has_sufficient_resources {
+        return Err(assinafy::Error::Validation("insufficient resources for signing".into()));
+    }
 
     let assignment = client.assignments().create(&document.id, &request).await?;
 
@@ -439,6 +476,11 @@ async fn sign_a_contract() -> assinafy::Result<()> {
     Ok(())
 }
 ```
+
+The sender receives signing links; the signer completes the [signer flow](#signer-facing-flow)
+separately. Handle completion through `DocumentCompleted` webhooks or bounded polling, then download
+the final artifact. Keep document and signer IDs so a timeout resumes the existing operation instead
+of uploading or sending the same document again.
 
 Document states, in lifecycle order:
 
@@ -606,6 +648,7 @@ async fn sign_as_signer(document: &str, assignment: &str) -> assinafy::Result<()
         .assignment
         .iter()
         .flat_map(|a| a.items.iter())
+        .filter(|item| !item.completed && item.signer.as_ref().is_some_and(|s| s.id == me.id))
         .filter_map(|item| {
             let field = item.field.as_ref()?;
             let page = item.page.as_ref()?;
@@ -930,6 +973,30 @@ The OAuth discovery tests need no credentials — they use production's public e
 ```bash
 cargo test --test live -- --ignored oauth
 ```
+
+The interactive production connection test checks authorization, workspace access, userinfo,
+refresh-token rotation and revocation. Register a temporary app with `documents:read`,
+`account:read`, `openid` and `offline_access`, and start a local HTTPS tunnel:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:62477 --no-autoupdate
+```
+
+Register the tunnel’s HTTPS URL plus `/callback` as the exact redirect URI. In another terminal, set
+these runtime values, then open the authorization URL printed by the test within five minutes:
+
+```bash
+export ASSINAFY_OAUTH_CLIENT_ID='registered-client-id'
+export ASSINAFY_OAUTH_REDIRECT_URI='https://your-tunnel.example.invalid/callback'
+export ASSINAFY_OAUTH_CALLBACK_ADDR='127.0.0.1:62477'
+# Confidential apps also set ASSINAFY_OAUTH_CLIENT_SECRET.
+cargo test --test oauth --locked -- --ignored --nocapture
+```
+
+The test revokes its tokens before asserting the result. Stop the tunnel afterward. Email OTP
+signing needs the recipient to supply their delivered access code; A1/A3 signing needs the signer’s
+own certificate and Web PKI extension. These interactive steps are separate from API-key tests.
+WhatsApp notification requires an eligible plan.
 
 ## License
 

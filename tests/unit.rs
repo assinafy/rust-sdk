@@ -1,8 +1,8 @@
 //! Pure unit tests for the SDK that do not require network access.
 
 use assinafy::models::{
-    ArtifactName, AssignmentMethod, DocumentStatus, NotificationMethod, TemplateStatus,
-    VerificationMethod,
+    ArtifactName, AssignmentMethod, Document, DocumentStatus, NotificationMethod, PublicDocument,
+    TemplatePage, TemplateStatus, VerificationMethod,
 };
 use assinafy::resources::{
     ApiKeyResponse, ConfirmSignerDataBody, CreateAssignmentBody, CreateAssignmentSigner,
@@ -143,10 +143,10 @@ fn artifact_name_round_trip() {
 
 #[test]
 fn envelope_decodes_signer_payload() {
-    let body = r#"{"status":200,"message":"","data":{"resource":"signer","id":"abc","full_name":"Bill","email":"user@example.invalid","whatsapp_phone_number":null,"has_accepted_terms":false}}"#;
+    let body = r#"{"status":200,"message":"","data":{"resource":"signer","id":"abc","full_name":"Maria Silva","email":"user@example.invalid","whatsapp_phone_number":null,"has_accepted_terms":false}}"#;
     let env: Envelope<assinafy::models::Signer> = serde_json::from_str(body).unwrap();
     assert_eq!(env.status, 200);
-    assert_eq!(env.data.full_name, "Bill");
+    assert_eq!(env.data.full_name, "Maria Silva");
     assert_eq!(env.data.email.as_deref(), Some("user@example.invalid"));
 }
 
@@ -275,7 +275,17 @@ fn response_debug_redacts_bearer_and_signing_urls() {
     }))
     .unwrap();
 
-    let rendered = format!("{login:?} {signing_url:?}");
+    let payload = serde_json::json!({
+        "id": "document-id", "name": "contract.pdf", "status": "metadata_ready",
+        "artifacts": {"original": "https://example.invalid/private-token"},
+        "signing_url": "https://example.invalid/private-token",
+        "pages": [{"id": "page-id", "number": 1, "height": 100, "width": 100,
+                   "download_url": "https://example.invalid/private-token"}]
+    });
+    let document: Document = serde_json::from_value(payload.clone()).unwrap();
+    let public: PublicDocument = serde_json::from_value(payload.clone()).unwrap();
+    let page: TemplatePage = serde_json::from_value(payload["pages"][0].clone()).unwrap();
+    let rendered = format!("{login:?} {signing_url:?} {document:?} {public:?} {page:?}");
     assert!(!rendered.contains("bearer-secret"));
     assert!(!rendered.contains("private-token"));
     assert!(rendered.contains("redacted"));
@@ -297,9 +307,6 @@ fn api_key_response_accepts_null_envelope_data() {
 
 #[test]
 fn public_send_token_body_matches_the_live_contract() {
-    // The published spec describes a lone `email` field; the live API rejects
-    // that with `400 O atributo "channel" é obrigatório.` on both production
-    // across deployments, so the SDK sends `{recipient, channel}`.
     let body = serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap();
     assert_eq!(
         body,
@@ -414,7 +421,7 @@ fn auth_request_builders_emit_documented_fields() {
 fn signer_confirmation_builder_emits_documented_fields() {
     let json = serde_json::to_value(
         ConfirmSignerDataBody::new()
-            .full_name("Bill Murray")
+            .full_name("Maria Silva")
             .email("user@example.invalid")
             .government_id("12345678909"),
     )
@@ -422,7 +429,7 @@ fn signer_confirmation_builder_emits_documented_fields() {
     assert_eq!(
         json,
         serde_json::json!({
-            "full_name": "Bill Murray",
+            "full_name": "Maria Silva",
             "email": "user@example.invalid",
             "government_id": "12345678909"
         })
@@ -535,12 +542,12 @@ fn document_verification_decodes_string_counts_for_valid_and_invalid() {
 #[test]
 fn public_document_decodes_with_string_page_count() {
     use assinafy::models::PublicDocument;
-    let body = r#"{"resource":"document","id":"doc1","name":"1.pdf","page_count":"1","created_by":"John Smith"}"#;
+    let body = r#"{"resource":"document","id":"doc1","name":"1.pdf","page_count":"1","created_by":"Maria Silva"}"#;
     let d: PublicDocument = serde_json::from_str(body).unwrap();
     assert_eq!(d.id, "doc1");
     assert_eq!(d.name, "1.pdf");
     assert_eq!(d.page_count.as_deref(), Some("1"));
-    assert_eq!(d.created_by.as_deref(), Some("John Smith"));
+    assert_eq!(d.created_by.as_deref(), Some("Maria Silva"));
 }
 
 #[test]
@@ -643,29 +650,31 @@ fn account_theme_decodes_live_shape() {
 fn create_account_body_and_sender_type_serialize() {
     use assinafy::resources::{CreateAccountBody, NotificationSenderType};
     let json = serde_json::to_value(
-        CreateAccountBody::new("Acme").notification_sender_type(NotificationSenderType::Account),
+        CreateAccountBody::new("Example Workspace")
+            .notification_sender_type(NotificationSenderType::Account),
     )
     .unwrap();
     assert_eq!(
         json,
-        serde_json::json!({ "name": "Acme", "notification_sender_type": "Account" })
+        serde_json::json!({ "name": "Example Workspace", "notification_sender_type": "Account" })
     );
     // Omitted when unset.
-    let json = serde_json::to_value(CreateAccountBody::new("Acme")).unwrap();
-    assert_eq!(json, serde_json::json!({ "name": "Acme" }));
+    let json = serde_json::to_value(CreateAccountBody::new("Example Workspace")).unwrap();
+    assert_eq!(json, serde_json::json!({ "name": "Example Workspace" }));
 }
 
 #[test]
 fn signer_self_decodes_is_signature_reusable() {
     use assinafy::models::SignerSelf;
-    let body = r#"{"resource":"signer","id":"s1","full_name":"Bill","email":"user@example.invalid",
+    let body = r#"{"resource":"signer","id":"s1","full_name":"Maria Silva","email":"user@example.invalid",
         "whatsapp_phone_number":null,"has_accepted_terms":true,
         "has_signature":true,"has_initial":false,"is_signature_reusable":true}"#;
     let s: SignerSelf = serde_json::from_str(body).unwrap();
     assert!(s.has_signature);
     assert!(s.is_signature_reusable);
     // Older payloads without the flag default to false.
-    let older = r#"{"id":"s1","full_name":"Bill","has_signature":false,"has_initial":false}"#;
+    let older =
+        r#"{"id":"s1","full_name":"Maria Silva","has_signature":false,"has_initial":false}"#;
     let s: SignerSelf = serde_json::from_str(older).unwrap();
     assert!(!s.is_signature_reusable);
 }
@@ -673,7 +682,7 @@ fn signer_self_decodes_is_signature_reusable() {
 #[test]
 fn assignment_summary_signer_decodes_whatsapp() {
     use assinafy::models::AssignmentSummarySigner;
-    let body = r#"{"id":"s1","full_name":"Ada","email":"user@example.invalid",
+    let body = r#"{"id":"s1","full_name":"Maria Silva","email":"user@example.invalid",
         "whatsapp_phone_number":"+5548999990000","has_accepted_terms":false,"completed":false}"#;
     let s: AssignmentSummarySigner = serde_json::from_str(body).unwrap();
     assert_eq!(s.whatsapp_phone_number.as_deref(), Some("+5548999990000"));

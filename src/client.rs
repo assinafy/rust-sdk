@@ -400,7 +400,7 @@ mod tests {
             stream
                 .write_all(
                     format!(
-                        "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/artifact\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/artifact?signature=example-redacted-signature\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     )
                     .as_bytes(),
                 )
@@ -435,6 +435,33 @@ mod tests {
         let target_request = target.join().unwrap().to_ascii_lowercase();
         assert!(!target_request.contains("sentinel-api-key"));
         assert!(!target_request.contains("referer:"));
+        assert!(target_request.contains("signature=example-redacted-signature"));
+    }
+
+    #[tokio::test]
+    async fn binary_redirects_reject_insecure_or_credential_bearing_destinations() {
+        for location in [
+            "http://example.invalid/artifact",
+            "https://user:password@example.invalid/artifact",
+            "https://example.invalid/artifact#fragment",
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                read_request(&mut stream);
+                write!(stream, "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            });
+            let client = Client::builder()
+                .base_url(BaseUrl::custom(format!("http://{address}/v1")).unwrap())
+                .build()
+                .unwrap();
+            assert!(matches!(
+                client.documents().download_thumbnail("document-id").await,
+                Err(Error::Config(_))
+            ));
+            server.join().unwrap();
+        }
     }
 
     #[tokio::test]

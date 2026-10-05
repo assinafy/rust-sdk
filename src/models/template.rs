@@ -91,7 +91,7 @@ pub struct Template {
 }
 
 /// A page within a template.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TemplatePage {
     /// Page identifier.
@@ -108,6 +108,19 @@ pub struct TemplatePage {
     /// Field placements on this page.
     #[serde(default)]
     pub fields: Vec<TemplateField>,
+}
+
+impl fmt::Debug for TemplatePage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TemplatePage")
+            .field("id", &self.id)
+            .field("number", &self.number)
+            .field("height", &self.height)
+            .field("width", &self.width)
+            .field("download_url", &"**redacted**")
+            .field("fields", &self.fields)
+            .finish()
+    }
 }
 
 /// A field placement on a template page.

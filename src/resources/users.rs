@@ -169,6 +169,10 @@ impl<'a> UsersApi<'a> {
     /// compatibility [`SelfUser`] data shape and consistently returns only the
     /// profile.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -208,6 +212,15 @@ impl<'a> UsersApi<'a> {
     /// { "granularity": "monthly" }
     /// ```
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// { "granularity": "daily", "month": "2026-06" }
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -242,6 +255,10 @@ impl<'a> UsersApi<'a> {
     /// returned; each defaults to `true` until changed. This endpoint is
     /// available on production only.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -270,8 +287,7 @@ impl<'a> UsersApi<'a> {
     /// current values. An empty update is rejected locally as
     /// [`Error::Config`]; the API likewise rejects empty objects, unknown keys,
     /// and non-boolean values. The full updated preference map is returned.
-    /// This endpoint is available on production and is not exposed by the
-    /// production only.
+    /// This endpoint is available on production only.
     ///
     /// # Request payload
     ///

@@ -123,6 +123,15 @@ impl<'a> ListTemplatesRequest<'a> {
     /// List items omit `resource`, `default_document_tags`, and per-page
     /// `fields` — [`TemplatesApi::get`] returns all three.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"page": 1, "per-page": 20, "search": "contract", "sort": "-created_at", "status": "Active", "tags": "tag_example_1,tag_example_2"}
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -343,7 +352,7 @@ pub type TemplateRoleBinding = TemplateDocumentSigner;
 /// One entry in the `editor_fields[]` array of the create body.
 ///
 /// ```json
-/// { "field_id": "fa8c14f3af99d2846d1789de4ba", "value": "Acme Inc." }
+/// { "field_id": "fa8c14f3af99d2846d1789de4ba", "value": "Example Workspace" }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditorField {
@@ -410,14 +419,14 @@ impl EditorField {
 ///
 /// ```json
 /// {
-///   "name": "Service Agreement — Acme",
+///   "name": "Service Agreement — Example Workspace",
 ///   "message": "Please review and sign.",
 ///   "expires_at": "2026-08-30T23:59:00Z",
 ///   "signers": [
 ///     { "role_id": "fa8c14f32d732271e071998246e", "id": "fa8c140cb49b79f940aab95fddd", "step": 1 }
 ///   ],
 ///   "editor_fields": [
-///     { "field_id": "fa8c14f3af99d2846d1789de4ba", "value": "Acme Inc." }
+///     { "field_id": "fa8c14f3af99d2846d1789de4ba", "value": "Example Workspace" }
 ///   ],
 ///   "tags": ["contracts"]
 /// }
@@ -572,6 +581,10 @@ impl<'a> TemplatesApi<'a> {
     /// route can be disabled by a deployment. Its response includes
     /// `default_document_tags` and per-page `fields`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -622,6 +635,17 @@ impl<'a> TemplatesApi<'a> {
     /// let file = CreateTemplateRequest::from_path("agreement.pdf").await?;
     /// let template = client.templates("acc_123").create(file).await?;
     /// # Ok(()) }
+    /// ```
+    ///
+    /// # Request payload
+    ///
+    /// Multipart form (`multipart/form-data`) with a binary `file` part.
+    ///
+    /// ```text
+    /// Content-Disposition: form-data; name="file"; filename="example.pdf"
+    /// Content-Type: application/pdf
+    ///
+    /// <file bytes>
     /// ```
     ///
     /// # Response payload
@@ -697,6 +721,10 @@ impl<'a> TemplatesApi<'a> {
     /// `DELETE /accounts/{account_id}/templates/{template_id}`. This
     /// compatibility route can be disabled by a deployment.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -723,6 +751,23 @@ impl<'a> TemplatesApi<'a> {
     /// The response body is the raw rendered page bytes, normally
     /// `image/jpeg`, rather than a JSON envelope. The returned tuple contains
     /// the bytes and the response `Content-Type` header.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
+    /// # Response payload
+    ///
+    /// Raw binary bytes; the response is not a JSON envelope. The returned tuple
+    /// contains the bytes and the server's `Content-Type` (or
+    /// `application/octet-stream` when absent).
+    ///
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: image/jpeg
+    ///
+    /// <artifact bytes>
+    /// ```
     pub async fn download_page<T: AsRef<str>, P: AsRef<str>>(
         &self,
         template_id: T,
@@ -749,14 +794,14 @@ impl<'a> TemplatesApi<'a> {
     ///
     /// ```json
     /// {
-    ///   "name": "Service Agreement — Acme",
+    ///   "name": "Service Agreement — Example Workspace",
     ///   "message": "Please review and sign.",
     ///   "expires_at": "2026-08-30T23:59:00Z",
     ///   "signers": [
     ///     { "role_id": "fa8c14f32d732271e071998246e", "id": "fa8c140cb49b79f940aab95fddd", "step": 1 }
     ///   ],
     ///   "editor_fields": [
-    ///     { "field_id": "fa8c14f3af99d2846d1789de4ba", "value": "Acme Inc." }
+    ///     { "field_id": "fa8c14f3af99d2846d1789de4ba", "value": "Example Workspace" }
     ///   ],
     ///   "tags": ["contracts"]
     /// }
@@ -774,7 +819,7 @@ impl<'a> TemplatesApi<'a> {
     ///   "id": "103acccd24234c07858ffddf6d84",
     ///   "account_id": "acc_1234567890abcdef12345678",
     ///   "template_id": "103b03b8e5f14a2c9d7e0011a2b3",
-    ///   "name": "Service Agreement — Acme",
+    ///   "name": "Service Agreement — Example Workspace",
     ///   "status": "uploaded",
     ///   "artifacts": { "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original" },
     ///   "is_closed": false,

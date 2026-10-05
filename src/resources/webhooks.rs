@@ -144,6 +144,15 @@ impl<'a> ListWebhookDispatchesRequest<'a> {
     ///
     /// `GET /accounts/{account_id}/webhooks`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"page": 1, "per-page": 20, "search": "contract", "sort": "-created_at", "event": "DocumentCompleted", "delivered": true, "from": 1790812800, "to": 1793491200}
+    /// ```
+    ///
     /// # Response payload
     ///
     /// A paginated list of dispatches; each item's `payload` mirrors the JSON
@@ -262,6 +271,10 @@ impl<'a> WebhooksApi<'a> {
     ///
     /// `GET /accounts/{account_id}/webhooks/subscriptions`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// `data` is `null` when no subscription has been registered.
@@ -298,6 +311,10 @@ impl<'a> WebhooksApi<'a> {
     /// `404`). To re-enable
     /// delivery, call [`register`](Self::register) with `is_active = true`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -327,6 +344,10 @@ impl<'a> WebhooksApi<'a> {
     /// List supported webhook event types.
     ///
     /// `GET /webhooks/event-types`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -372,6 +393,10 @@ impl<'a> WebhooksApi<'a> {
     /// Retry one webhook dispatch.
     ///
     /// `POST /accounts/{account_id}/webhooks/{dispatch_id}/retry`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///

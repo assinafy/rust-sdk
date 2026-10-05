@@ -145,6 +145,15 @@ impl<'a> ListTagsRequest<'a> {
 
     /// Execute the request.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"page": 1, "per-page": 20, "search": "contract", "sort": "name"}
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -293,6 +302,10 @@ impl<'a> TagsApi<'a> {
     ///
     /// `DELETE /accounts/{account_id}/tags/{tag_id}`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -311,6 +324,15 @@ impl<'a> TagsApi<'a> {
     /// Delete a tag with an explicit `force` option.
     ///
     /// `DELETE /accounts/{account_id}/tags/{tag_id}?force=true`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// { "force": true }
+    /// ```
     ///
     /// # Response payload
     ///
@@ -341,6 +363,10 @@ impl<'a> TagsApi<'a> {
     /// List tags currently attached to a document.
     ///
     /// `GET /accounts/{account_id}/documents/{document_id}/tags`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -494,6 +520,10 @@ impl<'a> TagsApi<'a> {
     /// Remove a single tag from a document.
     ///
     /// `DELETE /accounts/{account_id}/documents/{document_id}/tags/{tag_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///

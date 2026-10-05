@@ -375,6 +375,15 @@ impl<'a> ListAssignmentsRequest<'a> {
     /// parameters. The SDK also sends the legacy `accountId`
     /// parameter when the request came from [`AssignmentsApi::list`].
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// { "accountId": "acc_1234567890abcdef12345678", "page": 1, "per-page": 20 }
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -382,7 +391,7 @@ impl<'a> ListAssignmentsRequest<'a> {
     ///   { "id": "103033c9d2cec233bf65eea04999", "sender_email": "user@example.invalid",
     ///     "method": "virtual", "expires_at": null, "message": "Please sign",
     ///     "copy_receivers": [], "items": [],
-    ///     "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Ada Lovelace",
+    ///     "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Maria Silva",
     ///       "email": "user@example.invalid", "whatsapp_phone_number": null,
     ///       "has_accepted_terms": false, "completed": false, "notification_history": [],
     ///       "verification_method": "Email", "notification_methods": ["Email"],
@@ -479,7 +488,7 @@ impl<'a> AssignmentsApi<'a> {
     ///   "resource": "assignment", "id": "103033c9d2cec233bf65eea04999",
     ///   "sender_email": "user@example.invalid", "method": "virtual", "expires_at": null,
     ///   "message": "Please review and sign this contract.", "copy_receivers": [],
-    ///   "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Ada Lovelace",
+    ///   "signers": [ { "id": "19e6b92e7895332ed9708535d8c", "full_name": "Maria Silva",
     ///     "email": "user@example.invalid", "whatsapp_phone_number": null,
     ///     "has_accepted_terms": false, "completed": false, "notification_history": [],
     ///     "verification_method": "Email", "notification_methods": ["Email"],
@@ -542,9 +551,7 @@ impl<'a> AssignmentsApi<'a> {
             "estimate-cost",
         ])?;
         let payload = EstimateAssignmentPayload::from(body);
-        // The contract marks `signers` required only for `virtual`, but the API prices per
-        // signer in both modes and answers a signer-less body with
-        // 400 "Pelo menos um signatários precisa ser informado."
+        // The API prices per signer in both delivery modes.
         if payload.signers.is_empty() {
             return Err(Error::Validation(
                 "at least one signer is required for a cost estimate".into(),
@@ -602,6 +609,26 @@ impl<'a> AssignmentsApi<'a> {
     /// `PUT /documents/{document_id}/assignments/{assignmentId}/reset-expiration`
     /// with `{ "expires_at": "2026-12-31T23:59:59Z" }`. Returns the complete [`Assignment`]
     /// payload documented by [`Self::reset_expiration`].
+    ///
+    /// # Request payload
+    ///
+    /// JSON body setting the new expiration.
+    ///
+    /// ```json
+    /// { "expires_at": "2026-12-31T23:59:59Z" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// The updated assignment in the standard envelope; see
+    /// [`reset_expiration`](Self::reset_expiration) for the complete shape.
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "id": "assignment-id", "expires_at": "2026-12-31T23:59:59Z",
+    ///   "signers": [], "items": [], "signing_urls": []
+    /// } }
+    /// ```
     pub async fn reset_expiration_at<D: AsRef<str>, A: AsRef<str>>(
         &self,
         document_id: D,
@@ -615,6 +642,10 @@ impl<'a> AssignmentsApi<'a> {
     /// Re-send the signature-request notification to a specific signer.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/resend`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -645,6 +676,10 @@ impl<'a> AssignmentsApi<'a> {
     /// Estimate the cost of re-sending a notification to one signer.
     ///
     /// `POST /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/estimate-resend-cost`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -678,6 +713,10 @@ impl<'a> AssignmentsApi<'a> {
     /// List WhatsApp notifications for an assignment.
     ///
     /// `GET /documents/{document_id}/assignments/{assignment_id}/whatsapp-notifications`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -717,7 +756,7 @@ impl<'a> AssignmentsApi<'a> {
     /// [
     ///   { "itemId": "103033c9d33326458deb74fc3052",
     ///     "fieldId": "102d25a48bc7357b93f9b8e01b24",
-    ///     "pageId": "615213ed81b071f4293b2fc2", "value": "Signed by Ada Lovelace" }
+    ///     "pageId": "615213ed81b071f4293b2fc2", "value": "Signed by Maria Silva" }
     /// ]
     /// ```
     ///

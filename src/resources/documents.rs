@@ -212,6 +212,10 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// `GET /documents/statuses`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -229,6 +233,15 @@ impl<'a> DocumentsApi<'a> {
     ///
     /// `GET /accounts/{account_id}/documents`. Paginated via `X-Pagination-*`
     /// response headers; `data` is a bare array of documents.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"page": 1, "per-page": 20, "search": "contract", "sort": "-created_at", "status": "metadata_ready", "tags": "tag_example_1,tag_example_2", "method": "virtual"}
+    /// ```
     ///
     /// # Response payload
     ///
@@ -273,6 +286,17 @@ impl<'a> DocumentsApi<'a> {
     /// status `"uploaded"` with only the `original` artifact and empty `pages`;
     /// the `thumbnail` artifact and `pages` appear once processing completes.
     ///
+    /// # Request payload
+    ///
+    /// Multipart form (`multipart/form-data`) with a binary `file` part.
+    ///
+    /// ```text
+    /// Content-Disposition: form-data; name="file"; filename="example.pdf"
+    /// Content-Type: application/pdf
+    ///
+    /// <file bytes>
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -303,6 +327,15 @@ impl<'a> DocumentsApi<'a> {
     /// this is paginated via `X-Pagination-*` headers, but it is optimised for
     /// free-text lookups and returns a trimmed document shape.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"search": "contract", "status": "metadata_ready", "page": 1, "per-page": 20}
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -330,6 +363,10 @@ impl<'a> DocumentsApi<'a> {
     /// Retrieve a document.
     ///
     /// `GET /documents/{document_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -391,6 +428,10 @@ impl<'a> DocumentsApi<'a> {
     /// `DELETE /documents/{documentId}`. Only documents in a deletable status
     /// (see [`statuses`](Self::statuses)) may be removed.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -417,6 +458,23 @@ impl<'a> DocumentsApi<'a> {
     /// The response body is the raw artifact bytes (for `original`,
     /// `Content-Type: application/pdf`), not a JSON envelope. The returned tuple
     /// carries the bytes and the response `Content-Type` header.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
+    /// # Response payload
+    ///
+    /// Raw binary bytes; the response is not a JSON envelope. The returned tuple
+    /// contains the bytes and the server's `Content-Type` (or
+    /// `application/octet-stream` when absent).
+    ///
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: application/pdf
+    ///
+    /// <artifact bytes>
+    /// ```
     pub async fn download_artifact<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -445,6 +503,23 @@ impl<'a> DocumentsApi<'a> {
     /// The response body is the raw image bytes (`image/png` or `image/jpeg`),
     /// not a JSON envelope. The returned tuple carries the bytes and the
     /// response `Content-Type` header.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
+    /// # Response payload
+    ///
+    /// Raw binary bytes; the response is not a JSON envelope. The returned tuple
+    /// contains the bytes and the server's `Content-Type` (or
+    /// `application/octet-stream` when absent).
+    ///
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: image/jpeg
+    ///
+    /// <artifact bytes>
+    /// ```
     pub async fn download_thumbnail<S: AsRef<str>>(
         &self,
         document_id: S,
@@ -465,6 +540,23 @@ impl<'a> DocumentsApi<'a> {
     /// The response body is the raw page image bytes (`image/jpeg`), not a JSON
     /// envelope. The returned tuple carries the bytes and the response
     /// `Content-Type` header.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
+    /// # Response payload
+    ///
+    /// Raw binary bytes; the response is not a JSON envelope. The returned tuple
+    /// contains the bytes and the server's `Content-Type` (or
+    /// `application/octet-stream` when absent).
+    ///
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: image/jpeg
+    ///
+    /// <artifact bytes>
+    /// ```
     pub async fn download_page<D: AsRef<str>, P: AsRef<str>>(
         &self,
         document_id: D,
@@ -487,6 +579,10 @@ impl<'a> DocumentsApi<'a> {
     /// When the hash is unknown the call still succeeds with
     /// [`DocumentVerification::is_valid`] set to `false`. Note that
     /// `page_count` and `signer_count` are returned as strings.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///

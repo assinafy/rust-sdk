@@ -246,6 +246,15 @@ impl<'a> ListSignerDocumentsRequest<'a> {
 
     /// Execute the request.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"page": 1, "per-page": 20, "status": "pending_signature", "method": "virtual", "search": "contract", "sort": "-created_at"}
+    /// ```
+    ///
     /// # Response payload
     ///
     /// Paginated via `X-Pagination-*` headers; the body is an enveloped array
@@ -319,6 +328,10 @@ impl<'a> SignerSelfApi<'a> {
     /// Retrieve the authenticated signer.
     ///
     /// `GET /signers/self`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
     ///
     /// # Response payload
     ///
@@ -438,6 +451,10 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// `GET /sign`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -480,6 +497,26 @@ impl<'a> SignerSelfApi<'a> {
     /// For digital-certificate signers, confirm their data and accept the terms
     /// through [`Self::confirm_data`] before this request; the server checks
     /// that prerequisite before processing this query parameter.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// { "has_accepted_terms": true }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// The signable document; see [`signable_document`](Self::signable_document).
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": {
+    ///   "id": "document-id", "name": "example.pdf", "status": "pending_signature",
+    ///   "pages": [], "artifacts": {}, "is_closed": false
+    /// } }
+    /// ```
     pub async fn signable_document_with_accepted_terms(
         &self,
         has_accepted_terms: bool,
@@ -568,6 +605,10 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// `GET /signers/{signer_id}/document`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
     /// # Response payload
     ///
     /// ```json
@@ -626,6 +667,15 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// `GET /signers/{signer_id}/documents/search?search={term}`. Paginated via
     /// `X-Pagination-*` headers.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"search": "contract"}
+    /// ```
     ///
     /// # Response payload
     ///
@@ -745,6 +795,23 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// The response body is the raw artifact bytes, not a JSON envelope. The
     /// returned tuple carries the bytes and the response `Content-Type`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
+    /// # Response payload
+    ///
+    /// Raw binary bytes; the response is not a JSON envelope. The returned tuple
+    /// contains the bytes and the server's `Content-Type` (or
+    /// `application/octet-stream` when absent).
+    ///
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: application/pdf
+    ///
+    /// <artifact bytes>
+    /// ```
     pub async fn download_document<S: AsRef<str>, D: AsRef<str>>(
         &self,
         signer_id: S,
@@ -772,6 +839,18 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// The request body is the raw image bytes (not JSON); the image kind is
     /// selected via the `?type=signature|initial` query parameter.
+    ///
+    /// # Request payload
+    ///
+    /// Raw image bytes, with `Content-Type: image/png`. Query parameters select
+    /// the signature `type` and optionally `reuse`.
+    ///
+    /// ```text
+    /// POST /signature?type=signature&reuse=true
+    /// Content-Type: image/png
+    ///
+    /// <PNG bytes>
+    /// ```
     ///
     /// # Response payload
     ///
@@ -802,6 +881,18 @@ impl<'a> SignerSelfApi<'a> {
     /// signature in future processes; `None` omits the parameter and leaves
     /// the flag unchanged. This is the only endpoint that can set
     /// [`SignerSelf::is_signature_reusable`](crate::models::SignerSelf).
+    ///
+    /// # Request payload
+    ///
+    /// Raw image bytes, with `Content-Type: image/png`. Query parameters select
+    /// the signature `type` and optionally `reuse`.
+    ///
+    /// ```text
+    /// POST /signature?type=signature&reuse=true
+    /// Content-Type: image/png
+    ///
+    /// <PNG bytes>
+    /// ```
     ///
     /// # Response payload
     ///
@@ -840,6 +931,23 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// The response body is the raw image bytes, not a JSON envelope. The
     /// returned tuple carries the bytes and the response `Content-Type`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route.
+    ///
+    /// # Response payload
+    ///
+    /// Raw binary bytes; the response is not a JSON envelope. The returned tuple
+    /// contains the bytes and the server's `Content-Type` (or
+    /// `application/octet-stream` when absent).
+    ///
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: image/png
+    ///
+    /// <artifact bytes>
+    /// ```
     pub async fn download_signature(&self, kind: SignerType) -> Result<(Bytes, String)> {
         let path = self.http.path(&["signature", kind.as_str()])?;
         let req = self.http.request(Method::GET, &path)?;

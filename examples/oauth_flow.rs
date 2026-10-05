@@ -75,18 +75,9 @@ async fn main() -> assinafy::Result<()> {
     if callback.trim().is_empty() {
         return Ok(());
     }
-    let query: HashMap<String, String> = url::Url::parse(callback.trim())?
-        .query_pairs()
-        .into_owned()
-        .collect();
+    let query = callback_parameters(callback.trim(), &redirect_uri, &state)?;
     let param = |name: &str| query.get(name).map(String::as_str);
 
-    // Before anything else, `error=` returns included: the response must carry
-    // this attempt's `state` and the Assinafy issuer, or it is not ours.
-    if param("state") != Some(state.as_str()) || param("iss") != Some(ISSUER) {
-        eprintln!("state or iss mismatch: ignoring this response");
-        std::process::exit(1);
-    }
     if let Some(error) = param("error") {
         let description = param("error_description").unwrap_or_default();
         eprintln!("authorization failed: {error} {description}");
@@ -96,13 +87,12 @@ async fn main() -> assinafy::Result<()> {
 
     // 4. Exchange the code at once (it expires 60 seconds after approval),
     //    repeating the `resource` sent in step 2.
-    let token = client
-        .oauth()
-        .token(
-            &TokenRequest::authorization_code(&client_id, code, &redirect_uri, &pkce)
-                .resource(&resource.resource),
-        )
-        .await?;
+    let mut request = TokenRequest::authorization_code(&client_id, code, &redirect_uri, &pkce)
+        .resource(&resource.resource);
+    if let Ok(secret) = std::env::var("ASSINAFY_OAUTH_CLIENT_SECRET") {
+        request = request.client_secret(secret);
+    }
+    let token = client.oauth().token(&request).await?;
     println!(
         "granted scopes      : {}",
         token.scopes().collect::<Vec<_>>().join(", ")
@@ -122,4 +112,65 @@ async fn main() -> assinafy::Result<()> {
     }
 
     Ok(())
+}
+
+fn callback_parameters(
+    callback: &str,
+    redirect_uri: &str,
+    state: &str,
+) -> assinafy::Result<HashMap<String, String>> {
+    let callback = url::Url::parse(callback)?;
+    let registered = url::Url::parse(redirect_uri)?;
+    if callback.origin() != registered.origin() || callback.path() != registered.path() {
+        return Err(assinafy::Error::Validation("callback URI mismatch".into()));
+    }
+    let mut query = HashMap::new();
+    for (key, value) in callback.query_pairs().into_owned() {
+        if query.insert(key, value).is_some() {
+            return Err(assinafy::Error::Validation(
+                "duplicate callback parameter".into(),
+            ));
+        }
+    }
+    if query.get("state").map(String::as_str) != Some(state)
+        || query.get("iss").map(String::as_str) != Some(ISSUER)
+    {
+        return Err(assinafy::Error::Validation(
+            "callback state or issuer mismatch".into(),
+        ));
+    }
+    Ok(query)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callback_rejects_wrong_uri_state_issuer_and_duplicate_parameters() {
+        let base = "https://app.example.invalid/callback";
+        let valid = format!("{base}?code=example-redacted-code&state=expected&iss={ISSUER}");
+        assert_eq!(
+            callback_parameters(&valid, base, "expected").unwrap()["code"],
+            "example-redacted-code"
+        );
+        for invalid in [
+            valid.replace("/callback?", "/different?"),
+            valid.replace("app.example.invalid", "other.example.invalid"),
+            valid.replace("state=expected", "state=other"),
+            valid.replace(ISSUER, "https://other.example.invalid"),
+            format!("{valid}&code=second"),
+            format!("{base}?error=access_denied&state=other&iss={ISSUER}"),
+        ] {
+            assert!(matches!(
+                callback_parameters(&invalid, base, "expected"),
+                Err(assinafy::Error::Validation(_))
+            ));
+        }
+        let denied = format!("{base}?error=access_denied&state=expected&iss={ISSUER}");
+        assert_eq!(
+            callback_parameters(&denied, base, "expected").unwrap()["error"],
+            "access_denied"
+        );
+    }
 }

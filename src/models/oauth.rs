@@ -33,6 +33,9 @@ pub struct TokenResponse {
     /// Token type; always `"Bearer"` in practice.
     #[serde(default)]
     pub token_type: String,
+    /// RFC 8693 issued token type; present for internal-service token exchange.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_token_type: Option<String>,
     /// Lifetime of `access_token` in seconds.
     #[serde(default)]
     pub expires_in: Option<u64>,
@@ -94,6 +97,7 @@ impl fmt::Debug for TokenResponse {
         f.debug_struct("TokenResponse")
             .field("access_token", &"**redacted**")
             .field("token_type", &self.token_type)
+            .field("issued_token_type", &self.issued_token_type)
             .field("expires_in", &self.expires_in)
             .field(
                 "refresh_token",
@@ -239,6 +243,7 @@ mod tests {
         let token = TokenResponse {
             access_token: "sentinel-access".into(),
             token_type: "Bearer".into(),
+            issued_token_type: None,
             expires_in: Some(3600),
             refresh_token: Some("sentinel-refresh".into()),
             scope: Some("documents:read".into()),

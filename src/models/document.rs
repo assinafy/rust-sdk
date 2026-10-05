@@ -9,7 +9,7 @@ use super::assignment::{Assignment, AssignmentSigner};
 use super::tag::Tag;
 
 /// A document stored in an account.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Document {
     /// Resource discriminator (always `"document"` when present).
@@ -65,8 +65,32 @@ pub struct Document {
     pub updated_at: Option<serde_json::Value>,
 }
 
+impl fmt::Debug for Document {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Document")
+            .field("resource", &self.resource)
+            .field("id", &self.id)
+            .field("account_id", &self.account_id)
+            .field("template_id", &self.template_id)
+            .field("name", &self.name)
+            .field("status", &self.status)
+            .field("artifacts", &"**redacted**")
+            .field("pages", &self.pages)
+            .field("assignment", &self.assignment)
+            .field("current_signer", &self.current_signer)
+            .field("is_closed", &self.is_closed)
+            .field("signing_url", &"**redacted**")
+            .field("decline_reason", &self.decline_reason)
+            .field("declined_by", &self.declined_by)
+            .field("tags", &self.tags)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
+}
+
 /// A single page within a document.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct DocumentPage {
     /// Page identifier.
@@ -80,6 +104,18 @@ pub struct DocumentPage {
     /// URL to download the page as JPEG.
     #[serde(default)]
     pub download_url: Option<String>,
+}
+
+impl fmt::Debug for DocumentPage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DocumentPage")
+            .field("id", &self.id)
+            .field("number", &self.number)
+            .field("height", &self.height)
+            .field("width", &self.width)
+            .field("download_url", &"**redacted**")
+            .finish()
+    }
 }
 
 /// Identifies the actor that declined a document.
@@ -287,7 +323,7 @@ pub struct DocumentVerification {
 /// The current API documents the full [`Document`] shape. All fields other
 /// than `id` and `name` remain optional here because older deployments return
 /// only `resource`, `id`, `name`, `page_count`, and `created_by`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct PublicDocument {
     /// Resource discriminator (always `"document"` when present).
@@ -346,4 +382,29 @@ pub struct PublicDocument {
     /// This legacy field is absent from the current document schema.
     #[serde(default)]
     pub created_by: Option<String>,
+}
+
+impl fmt::Debug for PublicDocument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PublicDocument")
+            .field("resource", &self.resource)
+            .field("id", &self.id)
+            .field("account_id", &self.account_id)
+            .field("template_id", &self.template_id)
+            .field("name", &self.name)
+            .field("status", &self.status)
+            .field("artifacts", &"**redacted**")
+            .field("pages", &self.pages)
+            .field("assignment", &self.assignment)
+            .field("is_closed", &self.is_closed)
+            .field("signing_url", &"**redacted**")
+            .field("decline_reason", &self.decline_reason)
+            .field("declined_by", &self.declined_by)
+            .field("tags", &self.tags)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("page_count", &self.page_count)
+            .field("created_by", &self.created_by)
+            .finish()
+    }
 }

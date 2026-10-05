@@ -43,6 +43,15 @@ impl<'a> ListActivitiesRequest<'a> {
     ///
     /// `GET /documents/{documentId}/activities`.
     ///
+    /// # Request payload
+    ///
+    /// No request body. Resource identifiers are supplied in the route. Query
+    /// parameters are URL-encoded; only configured filters are sent.
+    ///
+    /// ```json
+    /// {"page": 1, "per-page": 20, "sort": "-created_at"}
+    /// ```
+    ///
     /// # Response payload
     ///
     /// ```json

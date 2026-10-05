@@ -304,6 +304,11 @@ impl HttpClient {
                 break;
             };
             let target = res.url().join(location)?;
+            // Signed artifact URLs may carry a query, but must still use a
+            // safe transport and must not contain embedded credentials.
+            let mut destination = target.clone();
+            destination.set_query(None);
+            crate::config::validate_https_url(&destination)?;
             let mut redirect = self
                 .inner
                 .get(target.clone())
@@ -464,7 +469,10 @@ fn decode_data<T: DeserializeOwned>(
 
 fn unexpected_decode_error(context: &str, error: serde_json::Error, body_len: usize) -> Error {
     Error::UnexpectedResponse(format!(
-        "failed to decode {context}: {error}; body length: {body_len} bytes"
+        "failed to decode {context}: {:?} at line {}, column {}; body length: {body_len} bytes",
+        error.classify(),
+        error.line(),
+        error.column(),
     ))
 }
 
@@ -712,6 +720,11 @@ mod tests {
             assert!(!rendered.contains(SECRET));
             assert!(rendered.contains("body length:"));
         }
+
+        let invalid_value = format!(r#"{{"status":200,"message":"","data":"{SECRET}"}}"#);
+        let error = decode_envelope::<bool>(StatusCode::OK, &headers, invalid_value.as_bytes())
+            .unwrap_err();
+        assert!(!format!("{error} {error:?}").contains(SECRET));
     }
 
     #[tokio::test]
