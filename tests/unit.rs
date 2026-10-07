@@ -875,3 +875,41 @@ fn auth_change_reset_and_link_bodies_emit_documented_fields() {
     let link = serde_json::to_value(LinkSocialLoginBody::new("google", "id-token")).unwrap();
     assert_eq!(link["provider"], "google");
 }
+
+#[test]
+fn webhook_endpoint_body_sends_only_set_fields() {
+    use assinafy::resources::WebhookEndpointBody;
+    let create = serde_json::to_value(
+        WebhookEndpointBody::new("https://hooks.example.invalid/a", "user@example.invalid")
+            .signing_enabled(true),
+    )
+    .unwrap();
+    assert_eq!(create["url"], "https://hooks.example.invalid/a");
+    assert_eq!(create["events"].as_array().unwrap().len(), 5);
+    assert_eq!(create["signing_enabled"], true);
+    assert!(create.get("name").is_none() && create.get("is_active").is_none());
+
+    let update = serde_json::to_value(WebhookEndpointBody::default().active(false)).unwrap();
+    assert_eq!(update, serde_json::json!({ "is_active": false }));
+}
+
+#[test]
+fn webhook_endpoint_models_parse_and_redact_secret() {
+    use assinafy::models::{WebhookEndpoint, WebhookEndpointSecret};
+    let endpoint: WebhookEndpoint = serde_json::from_value(serde_json::json!({
+        "id": "65f1c2a9b3e4d5f60718293a4b5c6d7e",
+        "name": null,
+        "url": "https://hooks.example.invalid/a",
+        "events": ["document_ready"],
+        "is_active": true,
+        "signing_enabled": true,
+        "created_at": "2026-10-01T12:00:00Z"
+    }))
+    .unwrap();
+    assert!(endpoint.signing_enabled && endpoint.name.is_none());
+
+    let secret: WebhookEndpointSecret =
+        serde_json::from_value(serde_json::json!({ "secret": "whsec_sentinel-value" })).unwrap();
+    assert_eq!(secret.secret, "whsec_sentinel-value");
+    assert!(!format!("{secret:?}").contains("sentinel"));
+}

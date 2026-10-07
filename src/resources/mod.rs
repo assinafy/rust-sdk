@@ -64,4 +64,7 @@ pub use templates::{
     ListTemplatesRequest, TemplateDocumentSigner, TemplateRoleBinding, TemplatesApi,
 };
 pub use users::{UpdateNotificationPreferencesBody, UsersApi};
-pub use webhooks::{ListWebhookDispatchesRequest, RegisterWebhookBody, WebhooksApi};
+pub use webhooks::{
+    ListWebhookDispatchesRequest, RegisterWebhookBody, WEBHOOK_TIMESTAMP_TOLERANCE,
+    WebhookEndpointBody, WebhooksApi, verify_webhook_signature,
+};

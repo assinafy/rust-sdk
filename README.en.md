@@ -36,7 +36,7 @@ keys, OAuth 2.1, and the signer-facing endpoints.
 - [Errors and rate limits](#errors-and-rate-limits)
 - [Operation index](#operation-index)
 - [Cargo features](#cargo-features)
-- [Integration tests](#integration-tests)
+- [Tests](#tests)
 - [License](#license)
 
 ## Install
@@ -249,7 +249,7 @@ Available scopes (constants in `assinafy::resources::scope`):
 | `templates:read` | Read templates, pages, roles, fields and tags |
 | `templates:write` | Create, update and delete templates and their components |
 | `account:read` | Read the workspace's profile, theme and logo |
-| `webhooks:write` | Configure and deactivate the workspace webhook subscription |
+| `webhooks:write` | Create, update and delete the workspace webhook endpoints |
 | `openid` | Identify the authenticated user and enable `/oauth/userinfo` |
 | `profile` | Include the user's name in the `id_token`/userinfo claims |
 | `email` | Include the email and its verification status in the `id_token`/userinfo claims |
@@ -391,7 +391,7 @@ The whole path of a signature, from upload to certificated PDF:
                           (the API notifies each signer and returns signing_urls)
  6. the signer signs      confirm data → verify OTP → fill the fields
  7. track                 GET  /documents/{id}                    → status: certificated
-                          or the DocumentCompleted webhook
+                          or the document_ready webhook
  8. download the result   GET  /documents/{id}/download/certificated
 ```
 
@@ -478,7 +478,7 @@ async fn sign_a_contract() -> assinafy::Result<()> {
 ```
 
 The sender receives signing links; the signer completes the [signer flow](#signer-facing-flow)
-separately. Handle completion through `DocumentCompleted` webhooks or bounded polling, then download
+separately. Handle completion through `document_ready` webhooks or bounded polling, then download
 the final artifact. Keep document and signer IDs so a timeout resumes the existing operation instead
 of uploading or sending the same document again.
 
@@ -791,12 +791,14 @@ async fn fields(account: &str) -> assinafy::Result<()> {
 
 ## Webhooks
 
-One webhook subscription per account; the API delivers each event and keeps a delivery history
-that can be retried.
+Each account has one webhook endpoint, or up to three on paid plans. Every active endpoint
+subscribed to an event receives it; the API keeps a delivery history that can be retried. With
+`signing_enabled`, each delivery carries a [Standard Webhooks](https://www.standardwebhooks.com)
+signature in the `webhook-id`, `webhook-timestamp` and `webhook-signature` headers.
 
 ```rust,no_run
 use assinafy::Client;
-use assinafy::resources::RegisterWebhookBody;
+use assinafy::resources::WebhookEndpointBody;
 
 async fn webhooks(account: &str) -> assinafy::Result<()> {
     let client = Client::from_api_key("redacted-api-key")?;
@@ -806,26 +808,65 @@ async fn webhooks(account: &str) -> assinafy::Result<()> {
         println!("{}: {}", kind.id, kind.description);
     }
 
-    hooks
-        .register(
-            &RegisterWebhookBody::new("https://app.example.invalid/hooks", "ops@example.invalid")
-                .events(["DocumentCompleted", "SignerDeclined"])
-                .active(true),
+    let endpoint = hooks
+        .create_endpoint(
+            &WebhookEndpointBody::new("https://app.example.invalid/hooks", "ops@example.invalid")
+                .name("ERP")
+                .events(["document_ready", "signer_rejected_document"])
+                .signing_enabled(true),
         )
         .await?;
+    // Store the `whsec_…` secret in the receiver's secret storage.
+    let secret = hooks.endpoint_secret(&endpoint.id).await?.secret;
+    let _ = secret;
 
-    // Delivery history, retrying the ones that failed.
-    let dispatches = hooks.list_dispatches().delivered(false).per_page(50).send().await?;
+    // Updates send only the fields that are set.
+    hooks
+        .update_endpoint(&endpoint.id, &WebhookEndpointBody::default().active(false))
+        .await?;
+
+    // The endpoint's delivery history, retrying the ones that failed.
+    let dispatches = hooks
+        .list_dispatches()
+        .endpoint_id(&endpoint.id)
+        .delivered(false)
+        .per_page(50)
+        .send()
+        .await?;
     for dispatch in &dispatches.data {
         println!("{} → HTTP {:?}", dispatch.event, dispatch.http_status);
         hooks.retry_dispatch(&dispatch.id).await?;
     }
 
-    // Turning it off is an `inactivate`; there is no delete route.
-    hooks.inactivate().await?;
+    hooks.delete_endpoint(&endpoint.id).await?;
     Ok(())
 }
 ```
+
+`rotate_endpoint_secret` replaces the secret and invalidates the old one immediately. The secret
+routes are not available to OAuth applications; use an API key. `register`, `get_subscription`
+and `inactivate` keep operating on the account's oldest endpoint.
+
+In the receiver, verify the **raw** body, exactly as received, before parsing it:
+
+```rust
+use assinafy::resources::verify_webhook_signature;
+
+fn receive(
+    secret: &str,
+    id: &str,
+    timestamp: &str,
+    signature: &str,
+    body: &[u8],
+) -> assinafy::Result<serde_json::Value> {
+    verify_webhook_signature(secret, id, timestamp, signature, body)?;
+    Ok(serde_json::from_slice(body)?)
+}
+```
+
+Verification compares in constant time and rejects timestamps more than
+`WEBHOOK_TIMESTAMP_TOLERANCE` (five minutes) from the local clock. Use the `webhook-id` header to
+drop repeated deliveries.
 
 ## Activities and artifacts
 
@@ -940,7 +981,7 @@ appear in `Display`/`Debug` — the URL is stripped from transport errors, and t
 | Tags | `list`, `create`, `update`, `delete`, `delete_with_force`, `list_for_document`, `add_to_document`, `set_on_document`, `remove_from_document` |
 | Fields | `create`, `list`, `get`, `update`, `delete`, `validate`, `validate_multiple`, `list_types` |
 | Templates | `list`, `get`, `create`, `update`, `delete`, `download_page`, `create_document`, `estimate_cost` |
-| Webhooks | `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch` |
+| Webhooks | `list_endpoints`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `endpoint_secret`, `rotate_endpoint_secret`, `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch`; `verify_webhook_signature` |
 | Activities | `list` |
 | Public | `document`, `send_token` |
 | Signer (self) | `me`, `accept_terms`, `verify`, `confirm_data`, `signable_document`, `signable_document_with_accepted_terms`, `current_document`, `list_documents`, `search_documents`, `sign`, `decline`, `sign_multiple`, `decline_multiple`, `download_document`, `upload_signature`, `upload_signature_with_reuse`, `download_signature` |
@@ -953,26 +994,17 @@ shapes. Runnable examples live in [`examples/`](examples).
 * `rustls-tls` *(default)* — TLS via [rustls](https://docs.rs/rustls).
 * `native-tls` — TLS via the operating system's native stack.
 
-## Integration tests
+## Tests
 
 ```bash
-export ASSINAFY_BASE_URL=<https base url>
-export ASSINAFY_API_KEY=<key>
-export ASSINAFY_ACCOUNT_ID=<account>
-export ASSINAFY_TEST_EMAIL_PRIMARY=<notification-test-inbox>
-export ASSINAFY_TEST_EMAIL_SECONDARY=<secondary-test-inbox>
-cargo test --test live -- --ignored --test-threads=1
+cargo test --all-targets --all-features --locked
+cargo test --doc --all-features --locked
 ```
 
-`--ignored` is required because these tests call the live API, and `--test-threads=1` keeps the
-shared workspace state consistent. The email variables are read only at runtime and cover
-notification delivery; none of it is compiled into the SDK.
+The tests run offline: request shapes, validation, unknown values, pagination, credential
+redaction, safe download routing and webhook signature verification.
 
-The OAuth discovery tests need no credentials — they use production's public endpoints:
-
-```bash
-cargo test --test live -- --ignored oauth
-```
+### Interactive OAuth connection
 
 The interactive production connection test checks authorization, workspace access, userinfo,
 refresh-token rotation and revocation. Register a temporary app with `documents:read`,

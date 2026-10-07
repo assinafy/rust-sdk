@@ -36,7 +36,7 @@ chaves de API, OAuth 2.1 e os endpoints voltados ao signatário.
 - [Erros e limites de taxa](#erros-e-limites-de-taxa)
 - [Índice de operações](#índice-de-operações)
 - [Features do Cargo](#features-do-cargo)
-- [Testes de integração](#testes-de-integração)
+- [Testes](#testes)
 - [Licença](#licença)
 
 ## Instalação
@@ -248,7 +248,7 @@ Escopos disponíveis (constantes em `assinafy::resources::scope`):
 | `templates:read` | Ler templates, páginas, papéis, campos e tags |
 | `templates:write` | Criar, atualizar e excluir templates e seus componentes |
 | `account:read` | Ler perfil, tema e logo do workspace |
-| `webhooks:write` | Configurar e desativar a assinatura de webhooks do workspace |
+| `webhooks:write` | Criar, alterar e excluir os endpoints de webhook do workspace |
 | `openid` | Identificar o usuário autenticado e habilitar `/oauth/userinfo` |
 | `profile` | Incluir o nome do usuário no `id_token`/userinfo |
 | `email` | Incluir o e-mail e sua verificação no `id_token`/userinfo |
@@ -389,7 +389,7 @@ O caminho ponta a ponta de uma assinatura, do upload ao PDF certificado:
                           (a API notifica cada signatário e devolve signing_urls)
  6. o signatário assina   confirma dados → verifica OTP → assina os campos
  7. acompanhar            GET  /documents/{id}                    → status: certificated
-                          ou webhook DocumentCompleted
+                          ou webhook document_ready
  8. baixar o resultado    GET  /documents/{id}/download/certificated
 ```
 
@@ -476,7 +476,7 @@ async fn assinar_contrato() -> assinafy::Result<()> {
 ```
 
 O remetente recebe os links; o signatário conclui separadamente o fluxo de assinatura descrito
-adiante. Trate a conclusão pelo webhook `DocumentCompleted` ou por consultas com prazo definido e
+adiante. Trate a conclusão pelo webhook `document_ready` ou por consultas com prazo definido e
 então baixe o artefato final. Guarde os IDs de documento e signatário para que uma retomada continue
 a operação existente, sem repetir o upload ou o envio.
 
@@ -789,12 +789,14 @@ async fn campos(conta: &str) -> assinafy::Result<()> {
 
 ## Webhooks
 
-Uma assinatura de webhook por conta; a API entrega cada evento e guarda o histórico de entregas,
-que pode ser reenviado.
+Cada conta tem um endpoint de webhook, ou até três nos planos pagos. Todo endpoint ativo inscrito
+em um evento o recebe; a API guarda o histórico de entregas, que pode ser reenviado. Com
+`signing_enabled`, cada entrega leva a assinatura [Standard Webhooks](https://www.standardwebhooks.com)
+nos cabeçalhos `webhook-id`, `webhook-timestamp` e `webhook-signature`.
 
 ```rust,no_run
 use assinafy::Client;
-use assinafy::resources::RegisterWebhookBody;
+use assinafy::resources::WebhookEndpointBody;
 
 async fn webhooks(conta: &str) -> assinafy::Result<()> {
     let client = Client::from_api_key("chave-de-api")?;
@@ -804,26 +806,65 @@ async fn webhooks(conta: &str) -> assinafy::Result<()> {
         println!("{}: {}", tipo.id, tipo.description);
     }
 
-    hooks
-        .register(
-            &RegisterWebhookBody::new("https://app.example.invalid/hooks", "ops@example.invalid")
-                .events(["DocumentCompleted", "SignerDeclined"])
-                .active(true),
+    let endpoint = hooks
+        .create_endpoint(
+            &WebhookEndpointBody::new("https://app.example.invalid/hooks", "ops@example.invalid")
+                .name("ERP")
+                .events(["document_ready", "signer_rejected_document"])
+                .signing_enabled(true),
         )
         .await?;
+    // Guarde o segredo `whsec_…` no cofre de segredos do receptor.
+    let segredo = hooks.endpoint_secret(&endpoint.id).await?.secret;
+    let _ = segredo;
 
-    // Histórico de entregas, com reenvio das que falharam.
-    let entregas = hooks.list_dispatches().delivered(false).per_page(50).send().await?;
+    // Alterações enviam só os campos definidos.
+    hooks
+        .update_endpoint(&endpoint.id, &WebhookEndpointBody::default().active(false))
+        .await?;
+
+    // Histórico de entregas do endpoint, com reenvio das que falharam.
+    let entregas = hooks
+        .list_dispatches()
+        .endpoint_id(&endpoint.id)
+        .delivered(false)
+        .per_page(50)
+        .send()
+        .await?;
     for entrega in &entregas.data {
         println!("{} → HTTP {:?}", entrega.event, entrega.http_status);
         hooks.retry_dispatch(&entrega.id).await?;
     }
 
-    // Desligar é um `inactivate`; não existe rota de exclusão.
-    hooks.inactivate().await?;
+    hooks.delete_endpoint(&endpoint.id).await?;
     Ok(())
 }
 ```
+
+`rotate_endpoint_secret` troca o segredo e invalida o anterior na hora. As rotas de segredo não
+estão disponíveis para aplicativos OAuth; use uma chave de API. As rotas `register`,
+`get_subscription` e `inactivate` continuam operando sobre o endpoint mais antigo da conta.
+
+No receptor, valide o corpo **bruto**, exatamente como recebido, antes de interpretá-lo:
+
+```rust
+use assinafy::resources::verify_webhook_signature;
+
+fn receber(
+    segredo: &str,
+    id: &str,
+    timestamp: &str,
+    assinatura: &str,
+    corpo: &[u8],
+) -> assinafy::Result<serde_json::Value> {
+    verify_webhook_signature(segredo, id, timestamp, assinatura, corpo)?;
+    Ok(serde_json::from_slice(corpo)?)
+}
+```
+
+A verificação compara em tempo constante e rejeita timestamps a mais de
+`WEBHOOK_TIMESTAMP_TOLERANCE` (cinco minutos) do relógio local. Use o cabeçalho `webhook-id` para
+descartar entregas repetidas.
 
 ## Atividades e artefatos
 
@@ -938,7 +979,7 @@ saem como `**redacted**`.
 | Tags | `list`, `create`, `update`, `delete`, `delete_with_force`, `list_for_document`, `add_to_document`, `set_on_document`, `remove_from_document` |
 | Campos | `create`, `list`, `get`, `update`, `delete`, `validate`, `validate_multiple`, `list_types` |
 | Templates | `list`, `get`, `create`, `update`, `delete`, `download_page`, `create_document`, `estimate_cost` |
-| Webhooks | `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch` |
+| Webhooks | `list_endpoints`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `endpoint_secret`, `rotate_endpoint_secret`, `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch`; `verify_webhook_signature` |
 | Atividades | `list` |
 | Públicos | `document`, `send_token` |
 | Signatário (self) | `me`, `accept_terms`, `verify`, `confirm_data`, `signable_document`, `signable_document_with_accepted_terms`, `current_document`, `list_documents`, `search_documents`, `sign`, `decline`, `sign_multiple`, `decline_multiple`, `download_document`, `upload_signature`, `upload_signature_with_reuse`, `download_signature` |
@@ -951,27 +992,17 @@ Exemplos executáveis ficam em [`examples/`](examples).
 * `rustls-tls` *(padrão)* — TLS via [rustls](https://docs.rs/rustls).
 * `native-tls` — TLS pela pilha nativa do sistema operacional.
 
-## Testes de integração
+## Testes
 
 ```bash
-export ASSINAFY_BASE_URL=<url-https-da-implantacao>
-export ASSINAFY_API_KEY=<chave>
-export ASSINAFY_ACCOUNT_ID=<conta>
-export ASSINAFY_TEST_EMAIL_PRIMARY=<caixa-de-teste>
-export ASSINAFY_TEST_EMAIL_SECONDARY=<caixa-de-teste-secundária>
-cargo test --test live -- --ignored --test-threads=1
+cargo test --all-targets --all-features --locked
+cargo test --doc --all-features --locked
 ```
 
-O `--ignored` é obrigatório porque esses testes chamam a API de verdade, e `--test-threads=1`
-mantém consistente o estado compartilhado do workspace. As variáveis de e-mail são lidas apenas
-em tempo de execução e cobrem a entrega de notificações; nada disso é compilado no SDK.
+Os testes são offline: formatos de requisição, validação, valores desconhecidos, paginação,
+redação de credenciais, roteamento seguro de downloads e verificação de assinaturas de webhook.
 
-Os testes de descoberta OAuth dispensam credenciais — eles usam os endpoints públicos de
-produção:
-
-```bash
-cargo test --test live -- --ignored oauth
-```
+### Conexão OAuth interativa
 
 O teste interativo de conexão em produção verifica autorização, acesso ao workspace, userinfo,
 rotação do refresh token e revogação. Cadastre um aplicativo temporário com `documents:read`,

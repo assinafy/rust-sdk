@@ -31,7 +31,7 @@ pub mod scope {
     pub const TEMPLATES_WRITE: &str = "templates:write";
     /// Read the workspace's profile, theme and logo.
     pub const ACCOUNT_READ: &str = "account:read";
-    /// Configure and deactivate the workspace webhook subscription.
+    /// Create, update and delete the workspace webhook endpoints.
     pub const WEBHOOKS_WRITE: &str = "webhooks:write";
     /// Identify the authenticated user and enable `GET /oauth/userinfo`.
     pub const OPENID: &str = "openid";
@@ -131,19 +131,8 @@ impl fmt::Debug for PkceChallenge {
 /// Encode `input` as unpadded base64url (RFC 4648 §5), the encoding RFC 7636
 /// mandates for both the verifier and the challenge.
 fn base64url(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    for chunk in input.chunks(3) {
-        let bits = u32::from(chunk[0]) << 16
-            | u32::from(chunk.get(1).copied().unwrap_or(0)) << 8
-            | u32::from(chunk.get(2).copied().unwrap_or(0));
-        // A 3-byte chunk encodes to 4 characters, 2 bytes to 3, 1 byte to 2;
-        // the padding RFC 4648 would add is omitted.
-        for shift in [18, 12, 6, 0].iter().take(chunk.len() + 1) {
-            out.push(ALPHABET[(bits >> shift & 0b111111) as usize] as char);
-        }
-    }
-    out
+    use base64::Engine as _;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(input)
 }
 
 /// Builder for the browser URL that starts the authorization-code flow.

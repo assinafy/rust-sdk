@@ -1,6 +1,6 @@
 [package]
 name = "assinafy"
-version = "3.5.0"
+version = "3.6.0"
 edition = "2024"
 rust-version = "1.86"
 description = "Idiomatic async Rust SDK for the Assinafy electronic signature API (https://api.assinafy.com.br/v1)."
@@ -27,6 +27,11 @@ bytes = "1"
 # dependencies of their own.
 getrandom = "0.4"
 sha2 = "0.11"
+# Webhook signatures (Standard Webhooks): HMAC-SHA256 over the delivery and
+# standard base64 for the `whsec_` key and the `v1,` signatures. `base64` also
+# encodes the PKCE verifier and challenge (unpadded base64url).
+base64 = "0.23"
+hmac = "0.13"
 # `form` encodes the OAuth token and revocation bodies, which RFC 6749 §3.2 and
 # RFC 7009 §2.1 define as application/x-www-form-urlencoded.
 # `default-features = false` only to opt out of reqwest's `default-tls`, which

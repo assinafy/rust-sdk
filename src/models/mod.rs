@@ -49,4 +49,7 @@ pub use template::{
     Template, TemplateField, TemplatePage, TemplateRole, TemplateStatus, TemplateTagRef,
 };
 pub use user::{LoginResult, NotificationPreferences, SelfUser, UserAccount, UserProfile};
-pub use webhook::{WebhookDispatch, WebhookEventTypeInfo, WebhookSubscription};
+pub use webhook::{
+    WebhookDispatch, WebhookEndpoint, WebhookEndpointSecret, WebhookEventTypeInfo,
+    WebhookSubscription,
+};
