@@ -3,36 +3,43 @@
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::http::HttpClient;
 use crate::models::PublicDocument;
 
 /// Body for `PUT /public/documents/{document_id}/send-token`.
 ///
-/// Both `recipient` and `channel` are required. The recipient must belong to
-/// a signer on the document; the channel is `email` or `whatsapp`.
+/// Both fields are required: `channel` is always `"email"` and `recipient` is
+/// the email address of a signer on the document. Build it with
+/// [`email`](Self::email).
+///
+/// # Request payload
+///
+/// ```json
+/// { "channel": "email", "recipient": "signer@example.com" }
+/// ```
 ///
 /// ```
 /// # use assinafy::resources::SendTokenBody;
 /// assert_eq!(
-///     serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap(),
-///     serde_json::json!({ "recipient": "user@example.invalid", "channel": "email" })
+///     serde_json::to_value(SendTokenBody::email("signer@example.com")).unwrap(),
+///     serde_json::json!({ "recipient": "signer@example.com", "channel": "email" })
 /// );
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendTokenBody {
-    /// Address or phone number that should receive the token. It must belong
-    /// to a signer on the document.
+    /// Email address that should receive the token. It must belong to a
+    /// signer on the document.
     pub recipient: String,
-    /// Delivery channel — `"email"` or `"whatsapp"`.
+    /// Delivery channel. The API accepts only `"email"`.
     pub channel: String,
 }
 
 impl SendTokenBody {
     /// Build a request for an explicit recipient and channel.
     ///
-    /// Prefer [`email`](Self::email) or [`whatsapp`](Self::whatsapp) unless
-    /// the channel is only known at runtime.
+    /// Prefer [`email`](Self::email): the API accepts only the `"email"`
+    /// channel, and [`PublicApi::send_token`] refuses any other.
     pub fn new<R: Into<String>, C: Into<String>>(recipient: R, channel: C) -> Self {
         Self {
             recipient: recipient.into(),
@@ -45,29 +52,63 @@ impl SendTokenBody {
         Self::new(recipient, "email")
     }
 
-    /// Deliver the token over WhatsApp, to a phone number in E.164 format.
+    /// Deliver the token over WhatsApp.
+    ///
+    /// The send-token route accepts only the `"email"` channel, so a body
+    /// built here is refused by [`PublicApi::send_token`] with
+    /// [`Error::Validation`].
+    #[deprecated(
+        since = "3.6.1",
+        note = "the send-token route accepts only the email channel; use SendTokenBody::email"
+    )]
     pub fn whatsapp<S: Into<String>>(recipient: S) -> Self {
         Self::new(recipient, "whatsapp")
     }
+
+    fn validate(&self) -> Result<()> {
+        if self.channel != "email" {
+            return Err(Error::Validation(
+                "send-token accepts only the \"email\" channel".into(),
+            ));
+        }
+        if self.recipient.trim().is_empty() {
+            return Err(Error::Validation(
+                "send-token requires the signer's email address as recipient".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
-/// Legacy payload used by older deployments of
-/// `PUT /public/documents/{document_id}/send-token`.
+/// Response `data` of `PUT /public/documents/{document_id}/send-token`,
+/// returned by [`PublicApi::send_token_with_result`].
 ///
-/// The current API defines only a generic success envelope and
-/// [`PublicApi::send_token`] therefore returns `()`. This model remains public
-/// so applications that deserialize a legacy response themselves do not lose
-/// source compatibility.
+/// # Response payload
+///
+/// ```json
+/// {
+///   "document": {
+///     "resource": "document",
+///     "id": "103b03b95d7951922360a1626727",
+///     "name": "contract.pdf",
+///     "page_count": 2,
+///     "created_by": "Maria Silva"
+///   },
+///   "channel": "email",
+///   "recipient": "signer@example.com"
+/// }
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SendTokenResult {
-    /// Public document metadata, when returned by the API.
+    /// The document the token grants access to: `resource`, `id`, `name`,
+    /// `page_count` and `created_by`.
     #[serde(default)]
     pub document: Option<PublicDocument>,
-    /// Delivery channel used, when returned.
+    /// Delivery channel used (`"email"`).
     #[serde(default)]
     pub channel: Option<String>,
-    /// Recipient that received the token, when returned.
+    /// Email address that received the token.
     #[serde(default)]
     pub recipient: Option<String>,
 }
@@ -128,50 +169,122 @@ impl<'a> PublicApi<'a> {
         self.http.send_envelope(req).await
     }
 
-    /// Send a signer access token to the signer, by email or WhatsApp.
+    /// Email a signer access token to a signer of the document.
     ///
     /// `PUT /public/documents/{document_id}/send-token`. Requires no
-    /// authentication. The recipient must belong to a signer on the document;
-    /// an unknown document answers `404 Documento não encontrado.`
+    /// authentication. The recipient must be the email address of a signer on
+    /// the document; an unknown document answers `404`. Use
+    /// [`send_token_with_result`](Self::send_token_with_result) to read the
+    /// response `data`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Validation`], before any request, when the channel is not
+    /// `"email"` or the recipient is empty.
     ///
     /// # Request payload
     ///
     /// ```json
-    /// { "recipient": "user@example.invalid", "channel": "email" }
+    /// { "channel": "email", "recipient": "signer@example.com" }
     /// ```
     ///
     /// # Response payload
     ///
     /// ```json
-    /// { "status": 200, "message": "" }
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "document": { "resource": "document", "id": "103b03b95d7951922360a1626727", "name": "contract.pdf", "page_count": 2, "created_by": "Maria Silva" },
+    ///     "channel": "email",
+    ///     "recipient": "signer@example.com"
+    ///   }
+    /// }
     /// ```
     pub async fn send_token<S: AsRef<str>>(
         &self,
         document_id: S,
         body: &SendTokenBody,
     ) -> Result<()> {
+        self.send_token_with_result(document_id, body)
+            .await
+            .map(drop)
+    }
+
+    /// Email a signer access token and return the response `data`.
+    ///
+    /// `PUT /public/documents/{document_id}/send-token`. Same request, rules
+    /// and errors as [`send_token`](Self::send_token).
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "channel": "email", "recipient": "signer@example.com" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "document": { "resource": "document", "id": "103b03b95d7951922360a1626727", "name": "contract.pdf", "page_count": 2, "created_by": "Maria Silva" },
+    ///     "channel": "email",
+    ///     "recipient": "signer@example.com"
+    ///   }
+    /// }
+    /// ```
+    pub async fn send_token_with_result<S: AsRef<str>>(
+        &self,
+        document_id: S,
+        body: &SendTokenBody,
+    ) -> Result<SendTokenResult> {
+        body.validate()?;
         let path = self
             .http
             .path(&["public", "documents", document_id.as_ref(), "send-token"])?;
         let req = self.http.request_public(Method::PUT, &path)?.json(body);
-        self.http.send_no_content(req).await
+        self.http.send_envelope(req).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SendTokenBody;
+    use super::*;
 
     #[test]
-    fn send_token_bodies_carry_the_channel_the_api_requires() {
-        for (body, expected_channel) in [
-            (SendTokenBody::email("user@example.invalid"), "email"),
-            (SendTokenBody::whatsapp("+5511999999999"), "whatsapp"),
+    fn send_token_body_is_the_email_channel_and_a_recipient() {
+        let body = SendTokenBody::email("signer@example.com");
+        assert_eq!(
+            serde_json::to_value(&body).unwrap(),
+            serde_json::json!({ "channel": "email", "recipient": "signer@example.com" })
+        );
+        assert!(body.validate().is_ok());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn send_token_refuses_other_channels_and_empty_recipients() {
+        for body in [
+            SendTokenBody::whatsapp("+5511999999999"),
+            SendTokenBody::new("signer@example.com", "sms"),
+            SendTokenBody::email(" "),
         ] {
-            let json = serde_json::to_value(&body).unwrap();
-            assert_eq!(json["channel"], expected_channel);
-            assert_eq!(json["recipient"], body.recipient);
-            assert_eq!(json.as_object().unwrap().len(), 2);
+            assert!(matches!(body.validate(), Err(Error::Validation(_))));
         }
+    }
+
+    #[test]
+    fn send_token_result_decodes_the_documented_data() {
+        let result: SendTokenResult = serde_json::from_value(serde_json::json!({
+            "document": { "resource": "document", "id": "doc-1", "name": "contract.pdf", "page_count": 2, "created_by": "Maria Silva" },
+            "channel": "email",
+            "recipient": "signer@example.com"
+        }))
+        .unwrap();
+        assert_eq!(result.channel.as_deref(), Some("email"));
+        assert_eq!(result.recipient.as_deref(), Some("signer@example.com"));
+        assert_eq!(result.document.unwrap().id, "doc-1");
     }
 }

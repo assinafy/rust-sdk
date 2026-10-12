@@ -606,7 +606,9 @@ Once the flow completes, downloading the `pades` artifact returns the qualified 
 ## Signer-facing flow
 
 With `Auth::AccessCode`, the client speaks through the signer endpoints. The code reaches the
-signer by email or WhatsApp and cannot be obtained through the API.
+signer by email or WhatsApp and cannot be obtained through the API. These methods refuse an empty
+code and any other credential, and send only the code; to read a signer's documents with the API
+key, use `list_documents_as_workspace` and `search_documents_as_workspace`.
 
 ```rust,no_run
 use assinafy::models::{SignDocumentItem, SignerType};
@@ -961,8 +963,12 @@ async fn handle(account: &str) -> assinafy::Result<()> {
 }
 ```
 
+`e.rate_limit()` returns the `X-Rate-Limit-Limit`/`-Remaining`/`-Reset` window reported with
+the error; `retry_after()` reads the `Retry-After` sent with a `429`.
+
 `Error` variants: `Config` (invalid configuration), `Http` (transport), `Serde`, `Io`, `Url`,
-`Api` (non-2xx response) and `UnexpectedResponse` (undecodable payload). Credentials never
+`Api` (non-2xx response), `UnexpectedResponse` (undecodable payload) and `Validation` (request
+refused locally, before sending). Credentials never
 appear in `Display`/`Debug` — the URL is stripped from transport errors, and tokens render as
 `**redacted**`.
 
@@ -970,11 +976,11 @@ appear in `Display`/`Debug` — the URL is stripped from transport errors, and t
 
 | Resource | Operations |
 | --- | --- |
-| Authentication | `login`, `social_login`, `change_password`, `request_password_reset`, `reset_password`, `link_social_login`, `social_login_url` |
+| Authentication | `login`, `verify_mfa`, `social_login`, `change_password`, `request_password_reset`, `reset_password`, `link_social_login`, `social_login_url` |
 | OAuth 2.1 | `protected_resource_metadata`, `authorization_server_metadata`, `token`, `revoke`, `userinfo` |
 | Accounts | `list`, `create`, `get`, `update`, `delete`, `delete_forcing`, `theme`, `stats`, `download_logo`, `upload_logo`, `delete_logo` |
 | API keys | `create`, `get`, `delete` |
-| Users | `me`, `stats`, `notification_preferences`, `update_notification_preferences` |
+| Users | `me`, `stats`, `notification_preferences`, `update_notification_preferences`, `mfa_methods`, `start_totp_enrollment`, `confirm_totp_enrollment`, `regenerate_recovery_codes`, `remove_mfa_method` |
 | Signers | `create`, `list`, `get`, `update`, `delete` |
 | Documents | `statuses`, `list`, `upload`, `search`, `get`, `rename`, `delete`, `download_artifact`, `download_thumbnail`, `download_page`, `verify` |
 | Assignments | `list`, `list_current`, `create`, `estimate_cost`, `reset_expiration`, `reset_expiration_at`, `resend_to_signer`, `estimate_resend_cost`, `whatsapp_notifications`, `sign`, `reject` |
@@ -983,7 +989,7 @@ appear in `Display`/`Debug` — the URL is stripped from transport errors, and t
 | Templates | `list`, `get`, `create`, `update`, `delete`, `download_page`, `create_document`, `estimate_cost` |
 | Webhooks | `list_endpoints`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `endpoint_secret`, `rotate_endpoint_secret`, `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch`; `verify_webhook_signature` |
 | Activities | `list` |
-| Public | `document`, `send_token` |
+| Public | `document`, `send_token`, `send_token_with_result` |
 | Signer (self) | `me`, `accept_terms`, `verify`, `confirm_data`, `signable_document`, `signable_document_with_accepted_terms`, `current_document`, `list_documents`, `search_documents`, `sign`, `decline`, `sign_multiple`, `decline_multiple`, `download_document`, `upload_signature`, `upload_signature_with_reuse`, `download_signature` |
 
 Each method's Rustdoc states the HTTP route it calls and shows the request and response wire

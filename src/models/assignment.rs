@@ -142,6 +142,9 @@ pub struct NotificationHistoryEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AssignmentSigner {
+    /// Resource type discriminator (`"signer"`).
+    #[serde(default)]
+    pub resource: Option<String>,
     /// Signer identifier.
     pub id: String,
     /// Full name.
@@ -152,6 +155,9 @@ pub struct AssignmentSigner {
     /// WhatsApp phone number (E.164).
     #[serde(default)]
     pub whatsapp_phone_number: Option<String>,
+    /// Government ID (CPF/CNPJ), when recorded.
+    #[serde(default)]
+    pub government_id: Option<String>,
     /// Whether the signer has accepted the terms.
     #[serde(default)]
     pub has_accepted_terms: bool,

@@ -1,8 +1,11 @@
 //! Endpoints that operate on the currently authenticated signer.
 //!
-//! Most routes here require an `Auth::AccessCode` credential
-//! (`?signer-access-code={code}`). The signer artifact-download route is the
-//! exception: the OpenAPI contract declares it unauthenticated.
+//! Every route here requires a non-empty `Auth::AccessCode` credential
+//! (`?signer-access-code={code}`), and that code is the only credential sent:
+//! an API key or user token is refused before any request is made. The two
+//! routes the API also opens to workspaces have explicit `*_as_workspace`
+//! variants. The signer artifact-download route is the exception: the
+//! OpenAPI contract declares it unauthenticated, so nothing is sent.
 
 use bytes::Bytes;
 use reqwest::Method;
@@ -25,8 +28,8 @@ pub struct VerifyCodeBody {
     /// One-time code emailed or sent via WhatsApp to the signer.
     #[serde(rename = "verification-code")]
     pub code: String,
-    /// Legacy body copy of the signer access code. Current deployments read
-    /// this credential from [`crate::Auth::AccessCode`] in the query string.
+    /// Legacy body copy of the signer access code. Never sent: the access code
+    /// travels only as [`crate::Auth::AccessCode`] in the query string.
     #[serde(rename = "signer-access-code", skip_serializing_if = "Option::is_none")]
     pub signer_access_code: Option<String>,
 }
@@ -41,6 +44,10 @@ impl VerifyCodeBody {
     }
 
     /// Include the signer access code in the JSON body for a legacy deployment.
+    #[deprecated(
+        since = "3.6.1",
+        note = "not part of the API contract and no longer sent; the access code travels only as Auth::AccessCode"
+    )]
     pub fn access_code<S: Into<String>>(mut self, code: S) -> Self {
         self.signer_access_code = Some(code.into());
         self
@@ -109,18 +116,24 @@ impl ConfirmSignerDataBody {
     }
 
     /// Set the signer WhatsApp phone number for a legacy deployment.
+    ///
+    /// Outside the documented contract; sent only when set.
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
         self
     }
 
     /// Accept or decline terms in this request for a legacy deployment.
+    ///
+    /// Outside the documented contract; sent only when set.
     pub fn accepted_terms(mut self, accepted: bool) -> Self {
         self.has_accepted_terms = Some(accepted);
         self
     }
 
     /// Set an inline verification code for a legacy deployment.
+    ///
+    /// Outside the documented contract; sent only when set.
     pub fn verification_code<S: Into<String>>(mut self, code: S) -> Self {
         self.code = Some(code.into());
         self
@@ -205,6 +218,7 @@ pub struct ListSignerDocumentsRequest<'a> {
     method: Option<String>,
     search: Option<String>,
     sort: Option<String>,
+    workspace: bool,
 }
 
 impl<'a> ListSignerDocumentsRequest<'a> {
@@ -221,24 +235,29 @@ impl<'a> ListSignerDocumentsRequest<'a> {
     }
 
     /// Compatibility filter by document status. Deployments may ignore it.
+    ///
+    /// Outside the documented contract; sent only when set.
     pub fn status<S: Into<String>>(mut self, status: S) -> Self {
         self.status = Some(status.into());
         self
     }
 
     /// Compatibility filter by assignment method. Deployments may ignore it.
+    ///
+    /// Outside the documented contract; sent only when set.
     pub fn method<S: Into<String>>(mut self, method: S) -> Self {
         self.method = Some(method.into());
         self
     }
 
-    /// Free-text search term.
+    /// Free-text search term. Outside the documented contract for this
+    /// route; [`SignerSelfApi::search_documents`] is the documented search.
     pub fn search<S: Into<String>>(mut self, search: S) -> Self {
         self.search = Some(search.into());
         self
     }
 
-    /// Sort expression.
+    /// Sort expression. Outside the documented contract; sent only when set.
     pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
         self.sort = Some(sort.into());
         self
@@ -252,7 +271,7 @@ impl<'a> ListSignerDocumentsRequest<'a> {
     /// parameters are URL-encoded; only configured filters are sent.
     ///
     /// ```json
-    /// {"page": 1, "per-page": 20, "status": "pending_signature", "method": "virtual", "search": "contract", "sort": "-created_at"}
+    /// {"page": 1, "per-page": 20}
     /// ```
     ///
     /// # Response payload
@@ -287,7 +306,11 @@ impl<'a> ListSignerDocumentsRequest<'a> {
         let path = self
             .http
             .path(&["signers", self.signer_id.as_str(), "documents"])?;
-        let mut req = self.http.request(Method::GET, &path)?;
+        let mut req = if self.workspace {
+            self.http.request_workspace(Method::GET, &path)?
+        } else {
+            self.http.request_signer(Method::GET, &path)?
+        };
         let mut q: Vec<(&str, String)> = Vec::new();
         if let Some(v) = self.page {
             q.push(("page", v.to_string()));
@@ -315,6 +338,11 @@ impl<'a> ListSignerDocumentsRequest<'a> {
 }
 
 /// Signer-facing endpoints.
+///
+/// Every method except [`download_document`](Self::download_document) and the
+/// `*_as_workspace` variants requires a non-empty [`crate::Auth::AccessCode`]
+/// and sends only that code; any other credential is refused with
+/// [`crate::Error::Config`], an empty code with [`crate::Error::Validation`].
 #[derive(Debug)]
 pub struct SignerSelfApi<'a> {
     http: &'a HttpClient,
@@ -353,7 +381,7 @@ impl<'a> SignerSelfApi<'a> {
     /// }
     /// ```
     pub async fn me(&self) -> Result<SignerSelf> {
-        let req = self.http.request(Method::GET, "signers/self")?;
+        let req = self.http.request_signer(Method::GET, "signers/self")?;
         self.http.send_envelope(req).await
     }
 
@@ -375,7 +403,9 @@ impl<'a> SignerSelfApi<'a> {
     /// }
     /// ```
     pub async fn accept_terms(&self) -> Result<()> {
-        let req = self.http.request(Method::PUT, "signers/accept-terms")?;
+        let req = self
+            .http
+            .request_signer(Method::PUT, "signers/accept-terms")?;
         self.http.send_no_content(req).await
     }
 
@@ -401,7 +431,10 @@ impl<'a> SignerSelfApi<'a> {
     /// }
     /// ```
     pub async fn verify(&self, body: &VerifyCodeBody) -> Result<()> {
-        let req = self.http.request(Method::POST, "verify")?.json(body);
+        let req = self
+            .http
+            .request_signer(Method::POST, "verify")?
+            .json(&serde_json::json!({ "verification-code": body.code }));
         self.http.send_no_content(req).await
     }
 
@@ -443,7 +476,7 @@ impl<'a> SignerSelfApi<'a> {
         let path =
             self.http
                 .path(&["documents", document_id.as_ref(), "signers", "confirm-data"])?;
-        let req = self.http.request(Method::PUT, &path)?.json(body);
+        let req = self.http.request_signer(Method::PUT, &path)?.json(body);
         self.http.send_envelope(req).await
     }
 
@@ -486,7 +519,7 @@ impl<'a> SignerSelfApi<'a> {
     /// }
     /// ```
     pub async fn signable_document(&self) -> Result<Document> {
-        let req = self.http.request(Method::GET, "sign")?;
+        let req = self.http.request_signer(Method::GET, "sign")?;
         self.http.send_data(req).await
     }
 
@@ -523,7 +556,7 @@ impl<'a> SignerSelfApi<'a> {
     ) -> Result<Document> {
         let req = self
             .http
-            .request(Method::GET, "sign")?
+            .request_signer(Method::GET, "sign")?
             .query(&[("has_accepted_terms", has_accepted_terms)]);
         self.http.send_data(req).await
     }
@@ -643,23 +676,48 @@ impl<'a> SignerSelfApi<'a> {
         let path = self
             .http
             .path(&["signers", signer_id.as_ref(), "document"])?;
-        let req = self.http.request(Method::GET, &path)?;
+        let req = self.http.request_signer(Method::GET, &path)?;
         self.http.send_envelope(req).await
     }
 
-    /// List documents visible to a signer.
+    /// List documents visible to a signer, authenticated by the signer access
+    /// code.
     ///
-    /// `GET /signers/{signer_id}/documents`.
+    /// `GET /signers/{signer_id}/documents`. Requires [`crate::Auth::AccessCode`];
+    /// use [`list_documents_as_workspace`](Self::list_documents_as_workspace)
+    /// to read the same list with an API key or user token.
     pub fn list_documents<S: Into<String>>(&self, signer_id: S) -> ListSignerDocumentsRequest<'_> {
+        self.signer_documents(signer_id.into(), false)
+    }
+
+    /// List a signer's documents with the workspace credential (API key or
+    /// user token) instead of a signer access code.
+    ///
+    /// `GET /signers/{signer_id}/documents`. Same query and response as
+    /// [`list_documents`](Self::list_documents); refuses an
+    /// [`crate::Auth::AccessCode`] client.
+    pub fn list_documents_as_workspace<S: Into<String>>(
+        &self,
+        signer_id: S,
+    ) -> ListSignerDocumentsRequest<'_> {
+        self.signer_documents(signer_id.into(), true)
+    }
+
+    fn signer_documents(
+        &self,
+        signer_id: String,
+        workspace: bool,
+    ) -> ListSignerDocumentsRequest<'_> {
         ListSignerDocumentsRequest {
             http: self.http,
-            signer_id: signer_id.into(),
+            signer_id,
             page: None,
             per_page: None,
             status: None,
             method: None,
             search: None,
             sort: None,
+            workspace,
         }
     }
 
@@ -707,14 +765,38 @@ impl<'a> SignerSelfApi<'a> {
         signer_id: S,
         term: T,
     ) -> Result<Page<Document>> {
-        let path = self
-            .http
-            .path(&["signers", signer_id.as_ref(), "documents", "search"])?;
-        let req = self
-            .http
-            .request(Method::GET, &path)?
-            .query(&[("search", term.as_ref())]);
-        self.http.send_paged(req).await
+        let path = self.search_path(signer_id.as_ref())?;
+        let req = self.http.request_signer(Method::GET, &path)?;
+        self.send_search(req, term.as_ref()).await
+    }
+
+    /// Search a signer's documents with the workspace credential (API key or
+    /// user token) instead of a signer access code.
+    ///
+    /// `GET /signers/{signer_id}/documents/search?search={term}`. Same query
+    /// and response as [`search_documents`](Self::search_documents); refuses
+    /// an [`crate::Auth::AccessCode`] client.
+    pub async fn search_documents_as_workspace<S: AsRef<str>, T: AsRef<str>>(
+        &self,
+        signer_id: S,
+        term: T,
+    ) -> Result<Page<Document>> {
+        let path = self.search_path(signer_id.as_ref())?;
+        let req = self.http.request_workspace(Method::GET, &path)?;
+        self.send_search(req, term.as_ref()).await
+    }
+
+    fn search_path(&self, signer_id: &str) -> Result<String> {
+        self.http
+            .path(&["signers", signer_id, "documents", "search"])
+    }
+
+    async fn send_search(
+        &self,
+        req: reqwest::RequestBuilder,
+        term: &str,
+    ) -> Result<Page<Document>> {
+        self.http.send_paged(req.query(&[("search", term)])).await
     }
 
     /// Sign multiple virtual documents at once.
@@ -743,7 +825,7 @@ impl<'a> SignerSelfApi<'a> {
     pub async fn sign_multiple(&self, body: &SignMultipleDocumentsBody) -> Result<()> {
         let req = self
             .http
-            .request(Method::PUT, "signers/documents/sign-multiple")?
+            .request_signer(Method::PUT, "signers/documents/sign-multiple")?
             .json(body);
         self.http.send_no_content(req).await
     }
@@ -776,7 +858,7 @@ impl<'a> SignerSelfApi<'a> {
     pub async fn decline_multiple(&self, body: &DeclineMultipleDocumentsBody) -> Result<()> {
         let req = self
             .http
-            .request(Method::PUT, "signers/documents/decline-multiple")?
+            .request_signer(Method::PUT, "signers/documents/decline-multiple")?
             .json(body);
         self.http.send_no_content(req).await
     }
@@ -912,7 +994,7 @@ impl<'a> SignerSelfApi<'a> {
         let bytes = bytes.into();
         let mut req = self
             .http
-            .request(Method::POST, "signature")?
+            .request_signer(Method::POST, "signature")?
             .query(&[("type", kind.as_str())]);
         if let Some(v) = reuse {
             req = req.query(&[("reuse", v)]);
@@ -950,7 +1032,7 @@ impl<'a> SignerSelfApi<'a> {
     /// ```
     pub async fn download_signature(&self, kind: SignerType) -> Result<(Bytes, String)> {
         let path = self.http.path(&["signature", kind.as_str()])?;
-        let req = self.http.request(Method::GET, &path)?;
+        let req = self.http.request_signer(Method::GET, &path)?;
         self.http.send_download(req).await
     }
 }

@@ -10,9 +10,10 @@ use crate::pagination::Page;
 
 /// Body for `POST /accounts/{account_id}/signers`.
 ///
-/// Only `full_name` is required by the API. `email` and `whatsapp_phone_number`
-/// are optional, but a signer needs at least one of them to be notified or
-/// verified through that channel.
+/// Only `full_name` is required by the API. `email`, `whatsapp_phone_number`
+/// and `government_id` are optional, but a signer needs an email or WhatsApp
+/// number to be notified or verified through that channel, and a CPF/CNPJ
+/// `government_id` to sign with a digital certificate.
 ///
 /// # Request payload
 ///
@@ -20,7 +21,8 @@ use crate::pagination::Page;
 /// {
 ///   "full_name": "Maria Silva",
 ///   "email": "user@example.invalid",
-///   "whatsapp_phone_number": "+5548999990000"
+///   "whatsapp_phone_number": "+5548999990000",
+///   "government_id": "123.456.789-09"
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -33,6 +35,9 @@ pub struct CreateSignerBody {
     /// WhatsApp phone number in E.164 format.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
+    /// Government ID (CPF/CNPJ).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub government_id: Option<String>,
 }
 
 impl CreateSignerBody {
@@ -42,6 +47,7 @@ impl CreateSignerBody {
             full_name: full_name.into(),
             email: None,
             whatsapp_phone_number: None,
+            government_id: None,
         }
     }
 
@@ -54,6 +60,12 @@ impl CreateSignerBody {
     /// Set the WhatsApp phone number.
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
+        self
+    }
+
+    /// Set the government ID (CPF/CNPJ).
+    pub fn government_id<S: Into<String>>(mut self, government_id: S) -> Self {
+        self.government_id = Some(government_id.into());
         self
     }
 }

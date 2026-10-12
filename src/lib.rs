@@ -83,9 +83,10 @@
 //! All operations return [`Result<T, Error>`](Error). API failures preserve
 //! the HTTP status, the server-provided message and the raw `data` payload so
 //! callers can branch on specific error codes without losing fidelity. The API
-//! rate-limits requests (see the `X-Rate-Limit-*` response headers);
-//! [`Error::is_rate_limited`] and [`Error::retry_after`] surface `429`
-//! responses and the number of seconds to wait before retrying.
+//! rate-limits requests per minute; [`Error::is_rate_limited`] and
+//! [`Error::retry_after`] surface `429` responses and the `Retry-After`
+//! seconds to wait, and [`Error::rate_limit`] exposes the
+//! `X-Rate-Limit-Limit`/`-Remaining`/`-Reset` window.
 //!
 //! ## Cargo features
 //!
@@ -121,6 +122,6 @@ pub mod resources;
 pub use auth::Auth;
 pub use client::{Client, ClientBuilder};
 pub use config::BaseUrl;
-pub use error::{ApiError, Error, Result};
+pub use error::{ApiError, Error, RateLimit, Result};
 pub use http::Envelope;
 pub use pagination::{Page, PaginationMeta};

@@ -604,7 +604,9 @@ Concluído o fluxo, baixar o artefato `pades` devolve a assinatura PAdES qualifi
 ## Fluxo do signatário
 
 Com `Auth::AccessCode`, o cliente passa a falar pelos endpoints do signatário. O código chega ao
-signatário por e-mail ou WhatsApp e não pode ser obtido pela API.
+signatário por e-mail ou WhatsApp e não pode ser obtido pela API. Esses métodos recusam um código
+vazio e qualquer outra credencial, e enviam somente o código; para ler os documentos de um
+signatário com a chave de API, use `list_documents_as_workspace` e `search_documents_as_workspace`.
 
 ```rust,no_run
 use assinafy::models::{SignDocumentItem, SignerType};
@@ -959,8 +961,12 @@ async fn tratar(conta: &str) -> assinafy::Result<()> {
 }
 ```
 
+`e.rate_limit()` traz a janela `X-Rate-Limit-Limit`/`-Remaining`/`-Reset` informada no erro;
+`retry_after()` lê o `Retry-After` enviado com o `429`.
+
 Variantes de `Error`: `Config` (configuração inválida), `Http` (transporte), `Serde`, `Io`,
-`Url`, `Api` (resposta não-2xx) e `UnexpectedResponse` (payload indecifrável). Credenciais nunca
+`Url`, `Api` (resposta não-2xx), `UnexpectedResponse` (payload indecifrável) e `Validation`
+(requisição recusada localmente, antes do envio). Credenciais nunca
 aparecem em `Display`/`Debug` — a URL é removida dos erros de transporte, e tokens em `Debug`
 saem como `**redacted**`.
 
@@ -968,11 +974,11 @@ saem como `**redacted**`.
 
 | Recurso | Operações |
 | --- | --- |
-| Autenticação | `login`, `social_login`, `change_password`, `request_password_reset`, `reset_password`, `link_social_login`, `social_login_url` |
+| Autenticação | `login`, `verify_mfa`, `social_login`, `change_password`, `request_password_reset`, `reset_password`, `link_social_login`, `social_login_url` |
 | OAuth 2.1 | `protected_resource_metadata`, `authorization_server_metadata`, `token`, `revoke`, `userinfo` |
 | Contas | `list`, `create`, `get`, `update`, `delete`, `delete_forcing`, `theme`, `stats`, `download_logo`, `upload_logo`, `delete_logo` |
 | Chaves de API | `create`, `get`, `delete` |
-| Usuários | `me`, `stats`, `notification_preferences`, `update_notification_preferences` |
+| Usuários | `me`, `stats`, `notification_preferences`, `update_notification_preferences`, `mfa_methods`, `start_totp_enrollment`, `confirm_totp_enrollment`, `regenerate_recovery_codes`, `remove_mfa_method` |
 | Signatários | `create`, `list`, `get`, `update`, `delete` |
 | Documentos | `statuses`, `list`, `upload`, `search`, `get`, `rename`, `delete`, `download_artifact`, `download_thumbnail`, `download_page`, `verify` |
 | Assignments | `list`, `list_current`, `create`, `estimate_cost`, `reset_expiration`, `reset_expiration_at`, `resend_to_signer`, `estimate_resend_cost`, `whatsapp_notifications`, `sign`, `reject` |
@@ -981,7 +987,7 @@ saem como `**redacted**`.
 | Templates | `list`, `get`, `create`, `update`, `delete`, `download_page`, `create_document`, `estimate_cost` |
 | Webhooks | `list_endpoints`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `endpoint_secret`, `rotate_endpoint_secret`, `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch`; `verify_webhook_signature` |
 | Atividades | `list` |
-| Públicos | `document`, `send_token` |
+| Públicos | `document`, `send_token`, `send_token_with_result` |
 | Signatário (self) | `me`, `accept_terms`, `verify`, `confirm_data`, `signable_document`, `signable_document_with_accepted_terms`, `current_document`, `list_documents`, `search_documents`, `sign`, `decline`, `sign_multiple`, `decline_multiple`, `download_document`, `upload_signature`, `upload_signature_with_reuse`, `download_signature` |
 
 Cada método traz no Rustdoc a rota HTTP que chama e os payloads de requisição e resposta.

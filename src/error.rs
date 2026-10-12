@@ -77,9 +77,9 @@ impl Error {
         self.status() == Some(429)
     }
 
-    /// Returns the number of seconds to wait before retrying, when the server
-    /// provided a `Retry-After` or `X-Rate-Limit-Reset` header on a failed
-    /// response.
+    /// Returns the number of seconds to wait before retrying: the
+    /// `Retry-After` header of a failed response, or — for a `429` without
+    /// it — `X-Rate-Limit-Reset`.
     pub fn retry_after(&self) -> Option<u64> {
         self.api().and_then(|e| e.retry_after)
     }
@@ -88,6 +88,12 @@ impl Error {
     /// the request. See [`ApiError::oauth_error`].
     pub fn oauth_error(&self) -> Option<&str> {
         self.api().and_then(ApiError::oauth_error)
+    }
+
+    /// Returns the `X-Rate-Limit-*` window reported with an API error. See
+    /// [`ApiError::rate_limit`].
+    pub fn rate_limit(&self) -> Option<RateLimit> {
+        self.api().and_then(|e| e.rate_limit)
     }
 
     /// Returns the scopes an OAuth token lacks, when the API refused it with
@@ -119,10 +125,14 @@ pub struct ApiError {
     /// distinguish the two.
     #[serde(default)]
     pub data: serde_json::Value,
-    /// Seconds to wait before retrying, parsed from the `Retry-After` or
-    /// `X-Rate-Limit-Reset` response header when present.
+    /// Seconds to wait before retrying, parsed from the `Retry-After` header
+    /// the API sends with `429 Too Many Requests`. A `429` without that header
+    /// falls back to `X-Rate-Limit-Reset`; other errors never do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    /// The `X-Rate-Limit-*` window reported with the response, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
     /// Space-separated scopes an OAuth token lacks, parsed from a
     /// `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"`
     /// challenge. Retrying cannot succeed: run the authorization flow again
@@ -130,6 +140,21 @@ pub struct ApiError {
     /// workspace, the user's own role, or an area OAuth tokens never reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub insufficient_scope: Option<String>,
+}
+
+/// The request window the API reports in the `X-Rate-Limit-Limit`,
+/// `X-Rate-Limit-Remaining` and `X-Rate-Limit-Reset` headers of every limited
+/// response. Requests are limited per minute: per user when authenticated,
+/// per IP address otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RateLimit {
+    /// `X-Rate-Limit-Limit`: requests allowed in the current window.
+    pub limit: u32,
+    /// `X-Rate-Limit-Remaining`: requests left in the current window.
+    pub remaining: u32,
+    /// `X-Rate-Limit-Reset`: seconds until the current window resets.
+    pub reset: u32,
 }
 
 impl ApiError {

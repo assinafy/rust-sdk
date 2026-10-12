@@ -12,8 +12,8 @@ use url::Url;
 
 use crate::auth::Auth;
 use crate::config::BaseUrl;
-use crate::error::{ApiError, Error, Result};
-use crate::pagination::{Page, PaginationMeta};
+use crate::error::{ApiError, Error, RateLimit, Result};
+use crate::pagination::{Page, PaginationMeta, header_number};
 
 /// Generic Assinafy response envelope: `{ status, message, data }`.
 ///
@@ -217,6 +217,34 @@ impl HttpClient {
         Ok(self.auth.apply(self.request_public(method, path)?))
     }
 
+    /// Build a request for a signer-facing route (OpenAPI `signerAccessCode`
+    /// security).
+    ///
+    /// Only a non-empty [`Auth::AccessCode`] is accepted, and it is the only
+    /// credential sent: an API key or user token never reaches these routes.
+    pub(crate) fn request_signer(&self, method: Method, path: &str) -> Result<RequestBuilder> {
+        match self.auth.as_ref() {
+            Auth::AccessCode(code) if !code.trim().is_empty() => self.request(method, path),
+            Auth::AccessCode(_) => Err(Error::Validation(
+                "the signer access code must not be empty".into(),
+            )),
+            _ => Err(Error::Config(
+                "signer endpoints require a signer access code (Auth::AccessCode)".into(),
+            )),
+        }
+    }
+
+    /// Build a request that must carry a workspace credential (API key or user
+    /// token), for routes the API also opens to signer access codes.
+    pub(crate) fn request_workspace(&self, method: Method, path: &str) -> Result<RequestBuilder> {
+        match self.auth.as_ref() {
+            Auth::AccessCode(_) | Auth::None => Err(Error::Config(
+                "this method requires a workspace credential (API key or access token)".into(),
+            )),
+            _ => self.request(method, path),
+        }
+    }
+
     /// Build a request without applying the client's configured credential.
     ///
     /// This is reserved for operations whose OpenAPI definition explicitly
@@ -376,18 +404,27 @@ fn ensure_success(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) 
     }
 }
 
-/// Parses the number of seconds to wait before retrying from the `Retry-After`
-/// or `X-Rate-Limit-Reset` response header, when present.
-fn retry_after_from(headers: Option<&HeaderMap>) -> Option<u64> {
-    let headers = headers?;
-    ["retry-after", "x-rate-limit-reset"]
-        .iter()
-        .find_map(|name| {
-            headers
-                .get(*name)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.trim().parse::<u64>().ok())
-        })
+/// Seconds to wait before retrying: `Retry-After`, which the API sends with
+/// `429 Too Many Requests`, or for a 429 without it `X-Rate-Limit-Reset`
+/// (which otherwise only says when the window restarts).
+fn retry_after_from(status: StatusCode, headers: &HeaderMap) -> Option<u64> {
+    header_number(headers, "retry-after").or_else(|| {
+        (status == StatusCode::TOO_MANY_REQUESTS)
+            .then(|| header_number(headers, "x-rate-limit-reset"))
+            .flatten()
+    })
+}
+
+/// The `X-Rate-Limit-*` window, when the response reported one.
+fn rate_limit_from(headers: &HeaderMap) -> Option<RateLimit> {
+    let limit = header_number(headers, "x-rate-limit-limit");
+    let remaining = header_number(headers, "x-rate-limit-remaining");
+    let reset = header_number(headers, "x-rate-limit-reset");
+    (limit.is_some() || remaining.is_some() || reset.is_some()).then(|| RateLimit {
+        limit: limit.unwrap_or_default(),
+        remaining: remaining.unwrap_or_default(),
+        reset: reset.unwrap_or_default(),
+    })
 }
 
 /// Reads the scopes named by a `WWW-Authenticate: Bearer
@@ -477,9 +514,8 @@ fn unexpected_decode_error(context: &str, error: serde_json::Error, body_len: us
 }
 
 fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Error {
-    let retry_after = retry_after_from(headers);
     let insufficient_scope = insufficient_scope_from(headers);
-    let api = match serde_json::from_slice::<serde_json::Value>(body) {
+    let (code, message, data) = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(serde_json::Value::Object(mut map)) => {
             let code = map
                 .get("status")
@@ -504,23 +540,22 @@ fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Er
                 Some(data) => data,
                 None => serde_json::Value::Object(map),
             };
-            ApiError {
-                status: code,
-                message,
-                data,
-                retry_after,
-                insufficient_scope,
-            }
+            (code, message, data)
         }
-        _ => ApiError {
-            status: status.as_u16(),
-            message: String::from_utf8_lossy(body).into_owned(),
-            data: serde_json::Value::Null,
-            retry_after,
-            insufficient_scope,
-        },
+        _ => (
+            status.as_u16(),
+            String::from_utf8_lossy(body).into_owned(),
+            serde_json::Value::Null,
+        ),
     };
-    Error::Api(api)
+    Error::Api(ApiError {
+        status: code,
+        message,
+        data,
+        retry_after: headers.and_then(|h| retry_after_from(status, h)),
+        rate_limit: headers.and_then(rate_limit_from),
+        insufficient_scope,
+    })
 }
 
 #[cfg(test)]
@@ -552,6 +587,50 @@ mod tests {
         assert_eq!(err.status, 404);
         assert_eq!(err.message, "Signer not found");
         assert_eq!(err.data, serde_json::json!({"field": "id"}));
+    }
+
+    #[test]
+    fn map_error_exposes_rate_limit_headers_and_retry_after() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut headers = HeaderMap::new();
+            for (name, value) in pairs {
+                headers.insert(*name, value.parse().unwrap());
+            }
+            headers
+        };
+        let limited = headers(&[
+            ("x-rate-limit-limit", "120"),
+            ("x-rate-limit-remaining", "0"),
+            ("x-rate-limit-reset", "37"),
+            ("retry-after", "30"),
+        ]);
+        let body = br#"{"status":429,"message":"Too Many Requests","data":null}"#;
+        let error = map_error(StatusCode::TOO_MANY_REQUESTS, Some(&limited), body);
+        assert!(error.is_rate_limited());
+        assert_eq!(error.retry_after(), Some(30));
+        assert_eq!(
+            error.rate_limit(),
+            Some(RateLimit {
+                limit: 120,
+                remaining: 0,
+                reset: 37
+            })
+        );
+
+        // A 429 without Retry-After waits for the window to reset.
+        let reset_only = headers(&[("x-rate-limit-reset", "12")]);
+        let error = map_error(StatusCode::TOO_MANY_REQUESTS, Some(&reset_only), body);
+        assert_eq!(error.retry_after(), Some(12));
+
+        // Every limited response carries the window headers; they are not a
+        // retry hint for other failures.
+        let error = map_error(StatusCode::BAD_REQUEST, Some(&reset_only), b"{}");
+        assert_eq!(error.retry_after(), None);
+        assert_eq!(error.rate_limit().map(|window| window.reset), Some(12));
+        assert_eq!(
+            map_error(StatusCode::BAD_REQUEST, None, b"{}").rate_limit(),
+            None
+        );
     }
 
     #[test]

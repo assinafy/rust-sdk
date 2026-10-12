@@ -48,7 +48,10 @@ pub use tag::Tag;
 pub use template::{
     Template, TemplateField, TemplatePage, TemplateRole, TemplateStatus, TemplateTagRef,
 };
-pub use user::{LoginResult, NotificationPreferences, SelfUser, UserAccount, UserProfile};
+pub use user::{
+    LoginResult, MfaMethod, MfaStatus, NotificationPreferences, RecoveryCodes, SelfUser,
+    TotpEnrollment, UserAccount, UserProfile,
+};
 pub use webhook::{
     WebhookDispatch, WebhookEndpoint, WebhookEndpointSecret, WebhookEventTypeInfo,
     WebhookSubscription,

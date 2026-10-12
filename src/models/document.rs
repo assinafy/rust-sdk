@@ -136,6 +136,9 @@ pub struct DeclinedBy {
     /// WhatsApp phone number in E.164 format, when available.
     #[serde(default)]
     pub whatsapp_phone_number: Option<String>,
+    /// Government ID (CPF/CNPJ), when recorded.
+    #[serde(default)]
+    pub government_id: Option<String>,
     /// Whether the signer has accepted the platform terms.
     #[serde(default)]
     pub has_accepted_terms: bool,
@@ -372,14 +375,13 @@ pub struct PublicDocument {
     /// Last-modification timestamp.
     #[serde(default)]
     pub updated_at: Option<serde_json::Value>,
-    /// Page count as reported by the API (a string such as `"1"`).
-    ///
-    /// This legacy field is absent from the current document schema.
-    #[serde(default)]
+    /// Page count, in its decimal text form. Present in the reduced document
+    /// returned by send-token (where the API sends an integer) and by older
+    /// deployments (where it is a string such as `"1"`); both decode here.
+    #[serde(default, deserialize_with = "number_or_string")]
     pub page_count: Option<String>,
-    /// Display name of the user that created the document.
-    ///
-    /// This legacy field is absent from the current document schema.
+    /// Display name of the user that created the document. Present in the
+    /// reduced document returned by send-token.
     #[serde(default)]
     pub created_by: Option<String>,
 }
@@ -407,4 +409,24 @@ impl fmt::Debug for PublicDocument {
             .field("created_by", &self.created_by)
             .finish()
     }
+}
+
+/// Decodes an optional count the API sends either as a JSON number or as a
+/// numeric string, keeping its decimal text.
+fn number_or_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(
+        match Option::<serde_json::Value>::deserialize(deserializer)? {
+            Some(serde_json::Value::String(text)) => Some(text),
+            Some(serde_json::Value::Number(number)) => Some(number.to_string()),
+            Some(serde_json::Value::Null) | None => None,
+            Some(_) => {
+                return Err(serde::de::Error::invalid_type(
+                    serde::de::Unexpected::Other("a non-numeric value"),
+                    &"a number or a numeric string",
+                ));
+            }
+        },
+    )
 }

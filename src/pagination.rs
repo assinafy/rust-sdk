@@ -63,6 +63,9 @@ pub struct PaginationMeta {
     /// `429`; see [`crate::Error::is_rate_limited`]/[`crate::Error::retry_after`]
     /// for the reactive (post-429) case.
     pub rate_limit_remaining: Option<u32>,
+    /// `X-Rate-Limit-Reset` — seconds until the current window resets, when
+    /// present on the response.
+    pub rate_limit_reset: Option<u32>,
 }
 
 impl PaginationMeta {
@@ -80,21 +83,25 @@ impl PaginationMeta {
     }
 
     pub(crate) fn from_headers(headers: &HeaderMap) -> Self {
-        fn parse(headers: &HeaderMap, name: &str) -> Option<u32> {
-            headers
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse().ok())
-        }
+        let parse = |name| header_number(headers, name);
         PaginationMeta {
-            current_page: parse(headers, "x-pagination-current-page"),
-            page_count: parse(headers, "x-pagination-page-count"),
-            per_page: parse(headers, "x-pagination-per-page"),
-            total_count: parse(headers, "x-pagination-total-count"),
-            rate_limit: parse(headers, "x-rate-limit-limit"),
-            rate_limit_remaining: parse(headers, "x-rate-limit-remaining"),
+            current_page: parse("x-pagination-current-page"),
+            page_count: parse("x-pagination-page-count"),
+            per_page: parse("x-pagination-per-page"),
+            total_count: parse("x-pagination-total-count"),
+            rate_limit: parse("x-rate-limit-limit"),
+            rate_limit_remaining: parse("x-rate-limit-remaining"),
+            rate_limit_reset: parse("x-rate-limit-reset"),
         }
     }
+}
+
+/// Parses a numeric response header, ignoring absent or malformed values.
+pub(crate) fn header_number<T: std::str::FromStr>(headers: &HeaderMap, name: &str) -> Option<T> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse().ok())
 }
 
 #[cfg(test)]
@@ -121,11 +128,13 @@ mod tests {
             ("x-pagination-total-count", "97"),
             ("x-rate-limit-limit", "120"),
             ("x-rate-limit-remaining", "106"),
+            ("x-rate-limit-reset", "42"),
         ]));
         assert_eq!(meta.current_page, Some(2));
         assert_eq!(meta.page_count, Some(5));
         assert_eq!(meta.rate_limit, Some(120));
         assert_eq!(meta.rate_limit_remaining, Some(106));
+        assert_eq!(meta.rate_limit_reset, Some(42));
         assert!(meta.has_more());
         assert_eq!(meta.next_page(), Some(3));
     }

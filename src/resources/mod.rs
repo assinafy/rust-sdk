@@ -41,7 +41,7 @@ pub use assignments::{
 };
 pub use auth::{
     AuthApi, ChangePasswordBody, EmailResult, LinkSocialLoginBody, LoginBody,
-    RequestPasswordResetBody, ResetPasswordBody, SocialLoginBody,
+    RequestPasswordResetBody, ResetPasswordBody, SocialLoginBody, VerifyMfaBody,
 };
 pub use documents::{
     DocumentsApi, ListDocumentsRequest, SearchDocumentsRequest, UploadDocumentRequest,
@@ -63,7 +63,7 @@ pub use templates::{
     CreateDocumentFromTemplateBody, CreateTemplateRequest, EditorField, EstimateTemplateCostBody,
     ListTemplatesRequest, TemplateDocumentSigner, TemplateRoleBinding, TemplatesApi,
 };
-pub use users::{UpdateNotificationPreferencesBody, UsersApi};
+pub use users::{ConfirmTotpBody, MfaReauthBody, UpdateNotificationPreferencesBody, UsersApi};
 pub use webhooks::{
     ListWebhookDispatchesRequest, RegisterWebhookBody, WEBHOOK_TIMESTAMP_TOLERANCE,
     WebhookEndpointBody, WebhooksApi, verify_webhook_signature,

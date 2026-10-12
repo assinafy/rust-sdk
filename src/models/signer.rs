@@ -26,6 +26,9 @@ pub struct Signer {
     /// `Whatsapp` verification flows).
     #[serde(default)]
     pub whatsapp_phone_number: Option<String>,
+    /// Government ID (CPF/CNPJ), when recorded.
+    #[serde(default)]
+    pub government_id: Option<String>,
     /// Whether the signer has accepted the platform terms.
     #[serde(default)]
     pub has_accepted_terms: bool,
@@ -68,6 +71,9 @@ pub struct SignerSelf {
     /// WhatsApp phone number in E.164 format.
     #[serde(default)]
     pub whatsapp_phone_number: Option<String>,
+    /// Government ID (CPF/CNPJ), when recorded.
+    #[serde(default)]
+    pub government_id: Option<String>,
     /// Whether the signer has accepted the platform terms.
     #[serde(default)]
     pub has_accepted_terms: bool,

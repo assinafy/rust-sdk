@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::http::HttpClient;
-use crate::models::{DocumentStatsRow, NotificationPreferences, SelfUser, UserProfile};
+use crate::models::{
+    DocumentStatsRow, MfaStatus, NotificationPreferences, RecoveryCodes, SelfUser, TotpEnrollment,
+    UserProfile,
+};
 
 use super::accounts::DocumentStatsQuery;
 
@@ -134,6 +137,95 @@ impl UpdateNotificationPreferencesBody {
             && self.template_processing_failed.is_none()
             && self.signer_whatsapp_failed.is_none()
     }
+}
+
+/// Body for `PUT /users/self/mfa/totp/confirm`.
+///
+/// `id` and `code` (a live code from the newly enrolled device) are required.
+/// When the enrollment replaces a confirmed method of the same type, also
+/// re-authenticate with [`password`](Self::password) or
+/// [`reauth_code`](Self::reauth_code). Holds secrets, so it has no `Debug`.
+///
+/// # Request payload
+///
+/// ```json
+/// { "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90", "code": "123456", "password": "example-redacted-password" }
+/// ```
+#[derive(Clone, Serialize)]
+pub struct ConfirmTotpBody {
+    id: String,
+    code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reauth_code: Option<String>,
+}
+
+impl ConfirmTotpBody {
+    /// Confirm enrollment `id` with a live `code` from the new device.
+    pub fn new<I: Into<String>, C: Into<String>>(id: I, code: C) -> Self {
+        Self {
+            id: id.into(),
+            code: code.into(),
+            password: None,
+            reauth_code: None,
+        }
+    }
+
+    /// Re-authenticate with the current password (needed only when replacing
+    /// a confirmed method).
+    pub fn password<S: Into<String>>(mut self, password: S) -> Self {
+        self.password = Some(password.into());
+        self
+    }
+
+    /// Re-authenticate with a live code from the current device or an
+    /// unused recovery code (needed only when replacing a confirmed method).
+    pub fn reauth_code<S: Into<String>>(mut self, code: S) -> Self {
+        self.reauth_code = Some(code.into());
+        self
+    }
+}
+
+/// Re-authentication body for `POST /users/self/mfa/recovery-codes` and
+/// `DELETE /users/self/mfa/{id}`: the current password, or a live
+/// authenticator code or unused recovery code (which is then consumed). Holds
+/// a secret, so it has no `Debug`.
+///
+/// # Request payload
+///
+/// ```json
+/// { "code": "123456" }
+/// ```
+#[derive(Clone, Serialize)]
+pub struct MfaReauthBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+}
+
+impl MfaReauthBody {
+    /// Re-authenticate with the current password.
+    pub fn password<S: Into<String>>(password: S) -> Self {
+        Self {
+            password: Some(password.into()),
+            code: None,
+        }
+    }
+
+    /// Re-authenticate with a live authenticator code or a recovery code.
+    pub fn code<S: Into<String>>(code: S) -> Self {
+        Self {
+            password: None,
+            code: Some(code.into()),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct MfaRemoval {
+    is_mfa_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,6 +418,148 @@ impl<'a> UsersApi<'a> {
             .json(body);
         self.http.send_envelope(req).await
     }
+
+    /// List the authenticated user's two-factor methods.
+    ///
+    /// `GET /users/self/mfa`.
+    ///
+    /// # Request payload
+    ///
+    /// No request body.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "methods": [
+    ///       { "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90", "type": "Totp", "label": "My phone", "confirmed_at": "2026-09-09T14:21:03Z", "last_used_at": "2026-09-09T18:02:44Z" }
+    ///     ],
+    ///     "recovery_codes_remaining": 10
+    ///   }
+    /// }
+    /// ```
+    pub async fn mfa_methods(&self) -> Result<MfaStatus> {
+        let req = self.http.request(Method::GET, "users/self/mfa")?;
+        self.http.send_envelope(req).await
+    }
+
+    /// Start an authenticator (TOTP) enrollment. Two-factor authentication is
+    /// not active until [`confirm_totp_enrollment`](Self::confirm_totp_enrollment).
+    ///
+    /// `POST /users/self/mfa/totp`. The secret is returned only by this call.
+    ///
+    /// # Request payload
+    ///
+    /// `label` is optional; `None` sends an empty object.
+    ///
+    /// ```json
+    /// { "label": "My phone" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    ///     "secret": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    ///     "provisioning_uri": "otpauth://totp/user%40example.invalid?issuer=Assinafy&secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    ///   }
+    /// }
+    /// ```
+    pub async fn start_totp_enrollment(&self, label: Option<&str>) -> Result<TotpEnrollment> {
+        let body = match label {
+            Some(label) => serde_json::json!({ "label": label }),
+            None => serde_json::json!({}),
+        };
+        let req = self
+            .http
+            .request(Method::POST, "users/self/mfa/totp")?
+            .json(&body);
+        self.http.send_envelope(req).await
+    }
+
+    /// Confirm an authenticator enrollment, enabling two-factor login, and
+    /// receive the recovery codes (shown only once).
+    ///
+    /// `PUT /users/self/mfa/totp/confirm`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90", "code": "123456" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": { "recovery_codes": ["ABCD-EFGH-JKMN"] } }
+    /// ```
+    pub async fn confirm_totp_enrollment(&self, body: &ConfirmTotpBody) -> Result<RecoveryCodes> {
+        let req = self
+            .http
+            .request(Method::PUT, "users/self/mfa/totp/confirm")?
+            .json(body);
+        self.http.send_envelope(req).await
+    }
+
+    /// Issue ten new recovery codes, invalidating the previous set.
+    ///
+    /// `POST /users/self/mfa/recovery-codes`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "password": "example-redacted-password" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": { "recovery_codes": ["ABCD-EFGH-JKMN"] } }
+    /// ```
+    pub async fn regenerate_recovery_codes(&self, body: &MfaReauthBody) -> Result<RecoveryCodes> {
+        let req = self
+            .http
+            .request(Method::POST, "users/self/mfa/recovery-codes")?
+            .json(body);
+        self.http.send_envelope(req).await
+    }
+
+    /// Remove an enrolled two-factor method. Returns whether two-factor
+    /// authentication is still enabled; removing the last method also
+    /// discards the recovery codes.
+    ///
+    /// `DELETE /users/self/mfa/{method_id}`.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "code": "123456" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": { "is_mfa_enabled": false } }
+    /// ```
+    pub async fn remove_mfa_method<S: AsRef<str>>(
+        &self,
+        method_id: S,
+        body: &MfaReauthBody,
+    ) -> Result<bool> {
+        let path = self
+            .http
+            .path(&["users", "self", "mfa", method_id.as_ref()])?;
+        let req = self.http.request(Method::DELETE, &path)?.json(body);
+        let removal: MfaRemoval = self.http.send_envelope(req).await?;
+        Ok(removal.is_mfa_enabled)
+    }
 }
 
 #[cfg(test)]
@@ -358,6 +592,27 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(legacy.into_profile().id, "legacy-user");
+    }
+
+    #[test]
+    fn mfa_bodies_send_only_the_fields_set() {
+        assert_eq!(
+            serde_json::to_value(ConfirmTotpBody::new("method-id", "123456")).unwrap(),
+            serde_json::json!({ "id": "method-id", "code": "123456" })
+        );
+        assert_eq!(
+            serde_json::to_value(ConfirmTotpBody::new("method-id", "123456").reauth_code("654321"))
+                .unwrap(),
+            serde_json::json!({ "id": "method-id", "code": "123456", "reauth_code": "654321" })
+        );
+        assert_eq!(
+            serde_json::to_value(MfaReauthBody::code("123456")).unwrap(),
+            serde_json::json!({ "code": "123456" })
+        );
+        assert_eq!(
+            serde_json::to_value(MfaReauthBody::password("example-redacted-password")).unwrap(),
+            serde_json::json!({ "password": "example-redacted-password" })
+        );
     }
 
     #[test]

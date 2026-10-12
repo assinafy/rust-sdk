@@ -138,6 +138,31 @@ impl ResetPasswordBody {
     }
 }
 
+/// `POST /authentication/mfa/verify` request body: the `mfa_token` from
+/// [`LoginResult::mfa_token`] and a 6-digit authenticator code or a recovery
+/// code. Holds secrets, so it has no `Debug`.
+///
+/// # Request payload
+///
+/// ```json
+/// { "mfa_token": "example-redacted-mfa-token", "code": "123456" }
+/// ```
+#[derive(Clone, Serialize)]
+pub struct VerifyMfaBody {
+    mfa_token: String,
+    code: String,
+}
+
+impl VerifyMfaBody {
+    /// Answer the login challenge `mfa_token` with `code`.
+    pub fn new<T: Into<String>, C: Into<String>>(mfa_token: T, code: C) -> Self {
+        Self {
+            mfa_token: mfa_token.into(),
+            code: code.into(),
+        }
+    }
+}
+
 /// `POST /auth/link-social-login` request body.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LinkSocialLoginBody {
@@ -241,6 +266,42 @@ impl<'a> AuthApi<'a> {
     /// ```
     pub async fn login(&self, body: &LoginBody) -> Result<LoginResult> {
         let req = self.http.request_public(Method::POST, "login")?.json(body);
+        self.http.send_envelope(req).await
+    }
+
+    /// Complete a two-factor login, exchanging the
+    /// [`LoginResult::mfa_token`] returned by [`login`](Self::login) for a
+    /// login result with an access token. The challenge is single-use and
+    /// expires 5 minutes after login.
+    ///
+    /// `POST /authentication/mfa/verify`. Requires no authentication.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "mfa_token": "example-redacted-mfa-token", "code": "123456" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// The same payload as [`login`](Self::login):
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "access_token": "example-redacted-access-token",
+    ///     "user": { "id": "user-id", "name": "Maria Silva", "email": "user@example.invalid", "created_at": "2026-01-14T12:03:41Z" },
+    ///     "accounts": [{ "id": "acc_1234567890abcdef12345678", "name": "Example Workspace", "roles": ["owner"], "created_at": "2026-01-14T12:03:41Z" }]
+    ///   }
+    /// }
+    /// ```
+    pub async fn verify_mfa(&self, body: &VerifyMfaBody) -> Result<LoginResult> {
+        let req = self
+            .http
+            .request_public(Method::POST, "authentication/mfa/verify")?
+            .json(body);
         self.http.send_envelope(req).await
     }
 

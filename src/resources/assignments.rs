@@ -784,7 +784,7 @@ impl<'a> AssignmentsApi<'a> {
             assignment_id.as_ref(),
         ])?;
         let items: Vec<SignDocumentItem> = items.into_iter().collect();
-        let req = self.http.request(Method::POST, &path)?.json(&items);
+        let req = self.http.request_signer(Method::POST, &path)?.json(&items);
         self.http.send_envelope(req).await
     }
 
@@ -818,7 +818,7 @@ impl<'a> AssignmentsApi<'a> {
         ])?;
         let req = self
             .http
-            .request(Method::PUT, &path)?
+            .request_signer(Method::PUT, &path)?
             .json(&serde_json::json!({ "decline_reason": reason.as_ref() }));
         self.http.send_no_content(req).await
     }

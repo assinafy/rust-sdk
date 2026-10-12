@@ -315,27 +315,12 @@ fn public_send_token_body_matches_the_live_contract() {
             "channel": "email"
         })
     );
-    let whatsapp = serde_json::to_value(SendTokenBody::whatsapp("+5511999999999")).unwrap();
-    assert_eq!(whatsapp["channel"], "whatsapp");
 }
 
 #[test]
 fn verify_code_body_uses_documented_field_names() {
     let body = serde_json::to_value(VerifyCodeBody::new("123456")).unwrap();
     assert_eq!(body, serde_json::json!({ "verification-code": "123456" }));
-}
-
-#[test]
-fn verify_code_body_can_emit_legacy_access_code() {
-    let body =
-        serde_json::to_value(VerifyCodeBody::new("123456").access_code("signer-code")).unwrap();
-    assert_eq!(
-        body,
-        serde_json::json!({
-            "verification-code": "123456",
-            "signer-access-code": "signer-code"
-        })
-    );
 }
 
 #[test]
@@ -912,4 +897,97 @@ fn webhook_endpoint_models_parse_and_redact_secret() {
         serde_json::from_value(serde_json::json!({ "secret": "whsec_sentinel-value" })).unwrap();
     assert_eq!(secret.secret, "whsec_sentinel-value");
     assert!(!format!("{secret:?}").contains("sentinel"));
+}
+
+#[tokio::test]
+async fn signer_routes_send_only_a_non_empty_access_code() {
+    let workspace = Client::from_api_key("placeholder-api-key").unwrap();
+    // A workspace credential never reaches a signer-access-code route.
+    assert!(matches!(
+        workspace.signer_self().me().await,
+        Err(assinafy::Error::Config(_))
+    ));
+    assert!(matches!(
+        workspace
+            .assignments()
+            .reject("document-id", "assignment-id", "reason")
+            .await,
+        Err(assinafy::Error::Config(_))
+    ));
+    assert!(matches!(
+        workspace
+            .signer_self()
+            .list_documents("signer-id")
+            .send()
+            .await,
+        Err(assinafy::Error::Config(_))
+    ));
+
+    // An empty access code is refused before any request.
+    let empty = workspace.with_auth(Auth::AccessCode(" ".into()));
+    assert!(matches!(
+        empty.signer_self().accept_terms().await,
+        Err(assinafy::Error::Validation(_))
+    ));
+
+    // The workspace variants refuse a signer access code.
+    let signer = workspace.with_auth(Auth::AccessCode("placeholder-code".into()));
+    assert!(matches!(
+        signer
+            .signer_self()
+            .list_documents_as_workspace("signer-id")
+            .send()
+            .await,
+        Err(assinafy::Error::Config(_))
+    ));
+    assert!(matches!(
+        signer
+            .signer_self()
+            .search_documents_as_workspace("signer-id", "contract")
+            .await,
+        Err(assinafy::Error::Config(_))
+    ));
+}
+
+#[tokio::test]
+async fn send_token_refuses_a_non_email_channel_before_sending() {
+    let client = Client::builder().build().unwrap();
+    let body = SendTokenBody::new("+5511999999999", "whatsapp");
+    assert!(matches!(
+        client.public().send_token("document-id", &body).await,
+        Err(assinafy::Error::Validation(_))
+    ));
+}
+
+#[test]
+fn login_result_carries_a_two_factor_challenge() {
+    let challenge: assinafy::models::LoginResult =
+        serde_json::from_value(serde_json::json!({ "mfa_token": "sentinel-mfa-token" })).unwrap();
+    assert_eq!(challenge.mfa_token.as_deref(), Some("sentinel-mfa-token"));
+    assert!(challenge.access_token.is_empty());
+    assert!(!format!("{challenge:?}").contains("sentinel-mfa-token"));
+}
+
+#[test]
+fn signer_models_decode_government_id() {
+    let signer: assinafy::models::Signer = serde_json::from_value(serde_json::json!({
+        "resource": "signer", "id": "signer-id", "full_name": "Maria Silva",
+        "email": "signer@example.com", "whatsapp_phone_number": null,
+        "government_id": "123.456.789-09", "has_accepted_terms": false
+    }))
+    .unwrap();
+    assert_eq!(signer.government_id.as_deref(), Some("123.456.789-09"));
+    assert_eq!(
+        serde_json::to_value(
+            assinafy::resources::CreateSignerBody::new("Maria Silva")
+                .email("signer@example.com")
+                .government_id("123.456.789-09")
+        )
+        .unwrap(),
+        serde_json::json!({
+            "full_name": "Maria Silva",
+            "email": "signer@example.com",
+            "government_id": "123.456.789-09"
+        })
+    );
 }
