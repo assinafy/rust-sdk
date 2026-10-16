@@ -562,6 +562,14 @@ impl<'a> TemplatesApi<'a> {
     }
 
     /// List templates.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListTemplatesRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListTemplatesRequest::send`] for the JSON response example.
     pub fn list(&self) -> ListTemplatesRequest<'_> {
         ListTemplatesRequest {
             http: self.http,

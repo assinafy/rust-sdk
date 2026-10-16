@@ -47,6 +47,14 @@ pub enum VerificationMethod {
 }
 
 impl VerificationMethod {
+    /// Identity document and face verification through a hosted capture session.
+    ///
+    /// Encodes `IdDocumentFaceMatchBasic` using [`Self::Other`]. Use with exactly
+    /// one notification channel; the signer must consent before capture starts.
+    pub fn id_document_face_match_basic() -> Self {
+        Self::Other("IdDocumentFaceMatchBasic".into())
+    }
+
     /// Wire-format string.
     pub fn as_str(&self) -> &str {
         match self {
@@ -164,6 +172,9 @@ pub struct AssignmentSigner {
     /// Method used to verify the signer's identity.
     #[serde(default)]
     pub verification_method: Option<VerificationMethod>,
+    /// Latest identity verification state. `InReview` holds document certification.
+    #[serde(default)]
+    pub identity_verification_status: Option<super::IdentityVerificationStatus>,
     /// Notification channels used to reach the signer.
     #[serde(default)]
     pub notification_methods: Option<Vec<NotificationMethod>>,

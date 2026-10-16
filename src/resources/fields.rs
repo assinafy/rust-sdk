@@ -325,6 +325,14 @@ impl<'a> FieldsApi<'a> {
     ///
     /// `GET /accounts/{account_id}/fields`. Returns every definition in one
     /// response (the endpoint is not paginated).
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListFieldsRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListFieldsRequest::send`] for the JSON response example.
     pub fn list(&self) -> ListFieldsRequest<'_> {
         ListFieldsRequest {
             http: self.http,

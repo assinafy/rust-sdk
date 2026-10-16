@@ -25,6 +25,7 @@ chaves de API, OAuth 2.1 e os endpoints voltados ao signatário.
 - [Ambientes](#ambientes)
 - [Fluxo completo do documento](#fluxo-completo-do-documento)
 - [Métodos de verificação do signatário](#métodos-de-verificação-do-signatário)
+- [Verificação biométrica de identidade](#verificação-biométrica-de-identidade)
 - [Certificado digital ICP-Brasil (A1/A3)](#certificado-digital-icp-brasil-a1a3)
 - [Fluxo do signatário](#fluxo-do-signatário)
 - [Templates](#templates)
@@ -387,7 +388,8 @@ O caminho ponta a ponta de uma assinatura, do upload ao PDF certificado:
  4. estimar o custo       POST /documents/{id}/assignments/estimate-cost
  5. pedir assinaturas     POST /documents/{id}/assignments        → status: pending_signature
                           (a API notifica cada signatário e devolve signing_urls)
- 6. o signatário assina   confirma dados → verifica OTP → assina os campos
+ 6. o signatário assina   aceita termos → confirma dados → OTP, biometria ou A1/A3
+                          (biometria InReview: a conta decide antes da certificação)
  7. acompanhar            GET  /documents/{id}                    → status: certificated
                           ou webhook document_ready
  8. baixar o resultado    GET  /documents/{id}/download/certificated
@@ -487,6 +489,7 @@ Estados do documento, em ordem de ciclo de vida:
 | `uploading` / `uploaded` | Upload em andamento / concluído |
 | `metadata_processing` / `metadata_ready` | Extração de metadados / pronto para assignment |
 | `pending_signature` | Aguardando um ou mais signatários |
+| `pending_identity_review` | Todos assinaram; aguardando análise de identidade pela conta (`status.as_str()`) |
 | `certificating` / `certificated` | Gerando o certificado / assinado e certificado |
 | `rejected_by_signer` / `rejected_by_user` | Recusado pelo signatário / cancelado pelo remetente |
 | `expired` | Prazo de assinatura vencido |
@@ -505,10 +508,11 @@ ambos assumem `Email`.
 | --- | --- | --- |
 | `Email` *(padrão)* | Código de uso único (OTP) por e-mail, exigido antes de assinar | Gratuito |
 | `Whatsapp` | Código de uso único (OTP) por WhatsApp | Verificação gratuita; notificação 0,45 crédito, só em planos pagos |
-| `DigitalCertificate` | O signatário assina com o **próprio certificado ICP-Brasil (A1/A3)**, pela extensão de navegador Web PKI, gerando uma assinatura **PAdES qualificada** | 2 créditos, somados ao custo da notificação |
+| `DigitalCertificate` | O signatário assina com o **próprio certificado ICP-Brasil (A1/A3)**, pela extensão de navegador Web PKI, gerando uma assinatura **PAdES qualificada** | 0,5 crédito, somado ao custo da notificação |
+| `IdDocumentFaceMatchBasic` | Captura hospedada do documento de identidade e da face, com consentimento biométrico explícito e análise pela conta quando necessária | Consulte `estimate_cost` para o preço atual da conta |
 
 Combinações permitidas: `Email` → notifica por `Email`; `Whatsapp` → notifica por `Whatsapp`;
-`DigitalCertificate` → notifica por `Email` **ou** `Whatsapp`. Apenas um método de notificação
+`DigitalCertificate` e `IdDocumentFaceMatchBasic` → notificam por `Email` **ou** `Whatsapp`. Apenas um método de notificação
 por signatário.
 
 ```rust,no_run
@@ -535,6 +539,11 @@ async fn pedir_com_metodos(documento: &str) -> assinafy::Result<()> {
             CreateAssignmentSigner::new("sig_certificado")
                 .step(3)
                 .verification_method(VerificationMethod::DigitalCertificate)
+                .notification_methods(vec![NotificationMethod::Email]),
+            // Captura biométrica, com notificação por email.
+            CreateAssignmentSigner::new("sig_biometric")
+                .step(4)
+                .verification_method(VerificationMethod::id_document_face_match_basic())
                 .notification_methods(vec![NotificationMethod::Email]),
         ],
     )
@@ -578,6 +587,62 @@ async fn estimar(documento: &str) -> assinafy::Result<()> {
     Ok(())
 }
 ```
+
+## Verificação biométrica de identidade
+
+Use `VerificationMethod::id_document_face_match_basic()` nos signatários de assignments ou templates.
+O método envia `IdDocumentFaceMatchBasic`, representado por `VerificationMethod::Other` na leitura.
+`SignerSelf::verification_method` identifica esse fluxo; o signatário usa a captura hospedada do
+documento e da face em vez do endpoint de OTP. Inicie somente após consentimento explícito:
+
+```rust,no_run
+use assinafy::Client;
+use assinafy::models::IdentityVerificationSession;
+
+async fn iniciar_captura(
+    signatario: &Client,
+    consentiu: bool,
+) -> assinafy::Result<IdentityVerificationSession> {
+    signatario.signer_self().start_identity_verification(consentiu).await
+}
+```
+
+O cliente acima deve usar `Auth::AccessCode`. Abra `session.url` sem alterações, incluindo o
+fragmento `#t=`. É um link de acesso: nunca registre em logs nem persista no armazenamento do
+navegador. Consulte `signer_self().identity_verification()` com prazo máximo; inicie somente
+quando `can_start` for verdadeiro (sem sessão ou `Expired`). `Pending` mantém a sessão existente.
+`Declined` e `Abandoned` exigem novo documento e assignment. Reenviar a notificação não substitui
+uma sessão ativa; uma captura expirada pode ser reiniciada sem nova cobrança de verificação.
+
+Em `InReview`, o signatário pode confirmar os dados e assinar enquanto a conta analisa.
+`AssignmentSigner::identity_verification_status` expõe esse estado. Depois de todas as assinaturas,
+o documento aguarda em `pending_identity_review`; leia com `DocumentStatus::as_str()`.
+A conta chama `assignments().identity_verification(documento, assignment, signatario)` para ler
+motivos, verificações e o resumo das evidências. Os nomes em `images` podem ser passados a
+`download_identity_image`; as imagens ficam indisponíveis após a decisão.
+
+Após uma pessoa analisar as evidências, registre sua decisão explícita com o cliente da conta:
+
+```rust,no_run
+use assinafy::Client;
+use assinafy::resources::{IdentityReviewBody, IdentityReviewDecision};
+
+async fn registrar_analise(
+    conta: &Client,
+    documento: &str,
+    assignment: &str,
+    signatario: &str,
+    decisao: IdentityReviewDecision,
+) -> assinafy::Result<()> {
+    conta.assignments().review_identity_verification(
+        documento, assignment, signatario, &IdentityReviewBody::new(decisao),
+    ).await?;
+    Ok(())
+}
+```
+
+`Approved` libera a certificação quando todas as assinaturas e análises terminarem. `Rejected`
+cancela o documento e notifica todos os signatários e destinatários de cópia. A `.note(...)` é privada.
 
 ## Certificado digital ICP-Brasil (A1/A3)
 
@@ -817,7 +882,9 @@ async fn webhooks(conta: &str) -> assinafy::Result<()> {
         )
         .await?;
     // Guarde o segredo `whsec_…` no cofre de segredos do receptor.
-    let segredo = hooks.endpoint_secret(&endpoint.id).await?.secret;
+    let segredo = endpoint.secret.as_deref().ok_or_else(||
+        assinafy::Error::UnexpectedResponse("segredo de webhook ausente".into())
+    )?;
     let _ = segredo;
 
     // Alterações enviam só os campos definidos.
@@ -844,7 +911,9 @@ async fn webhooks(conta: &str) -> assinafy::Result<()> {
 ```
 
 `rotate_endpoint_secret` troca o segredo e invalida o anterior na hora. As rotas de segredo não
-estão disponíveis para aplicativos OAuth; use uma chave de API. As rotas `register`,
+estão disponíveis para aplicativos OAuth; guarde `WebhookEndpoint::secret` da criação.
+Se uma aplicação OAuth o perder, exclua e recrie esse endpoint. Use `list_endpoints_by_url` para
+localizar a URL exata e `delete_endpoint_by_url` para removê-la. As rotas `register`,
 `get_subscription` e `inactivate` continuam operando sobre o endpoint mais antigo da conta.
 
 No receptor, valide o corpo **bruto**, exatamente como recebido, antes de interpretá-lo:
@@ -981,14 +1050,14 @@ saem como `**redacted**`.
 | Usuários | `me`, `stats`, `notification_preferences`, `update_notification_preferences`, `mfa_methods`, `start_totp_enrollment`, `confirm_totp_enrollment`, `regenerate_recovery_codes`, `remove_mfa_method` |
 | Signatários | `create`, `list`, `get`, `update`, `delete` |
 | Documentos | `statuses`, `list`, `upload`, `search`, `get`, `rename`, `delete`, `download_artifact`, `download_thumbnail`, `download_page`, `verify` |
-| Assignments | `list`, `list_current`, `create`, `estimate_cost`, `reset_expiration`, `reset_expiration_at`, `resend_to_signer`, `estimate_resend_cost`, `whatsapp_notifications`, `sign`, `reject` |
+| Assignments | `list`, `list_current`, `create`, `estimate_cost`, `reset_expiration`, `reset_expiration_at`, `resend_to_signer`, `estimate_resend_cost`, `whatsapp_notifications`, `identity_verification`, `download_identity_image`, `review_identity_verification`, `sign`, `reject` |
 | Tags | `list`, `create`, `update`, `delete`, `delete_with_force`, `list_for_document`, `add_to_document`, `set_on_document`, `remove_from_document` |
 | Campos | `create`, `list`, `get`, `update`, `delete`, `validate`, `validate_multiple`, `list_types` |
 | Templates | `list`, `get`, `create`, `update`, `delete`, `download_page`, `create_document`, `estimate_cost` |
-| Webhooks | `list_endpoints`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `endpoint_secret`, `rotate_endpoint_secret`, `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch`; `verify_webhook_signature` |
+| Webhooks | `list_endpoints`, `list_endpoints_by_url`, `delete_endpoint_by_url`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `endpoint_secret`, `rotate_endpoint_secret`, `register`, `get_subscription`, `inactivate`, `event_types`, `list_dispatches`, `retry_dispatch`; `verify_webhook_signature` |
 | Atividades | `list` |
 | Públicos | `document`, `send_token`, `send_token_with_result` |
-| Signatário (self) | `me`, `accept_terms`, `verify`, `confirm_data`, `signable_document`, `signable_document_with_accepted_terms`, `current_document`, `list_documents`, `search_documents`, `sign`, `decline`, `sign_multiple`, `decline_multiple`, `download_document`, `upload_signature`, `upload_signature_with_reuse`, `download_signature` |
+| Signatário (self) | `me`, `identity_verification`, `start_identity_verification`, `accept_terms`, `verify`, `confirm_data`, `signable_document`, `signable_document_with_accepted_terms`, `current_document`, `list_documents`, `list_documents_as_workspace`, `search_documents`, `search_documents_as_workspace`, `sign`, `decline`, `sign_multiple`, `decline_multiple`, `download_document`, `upload_signature`, `upload_signature_with_reuse`, `download_signature` |
 
 Cada método traz no Rustdoc a rota HTTP que chama e os payloads de requisição e resposta.
 Exemplos executáveis ficam em [`examples/`](examples).

@@ -211,6 +211,14 @@ impl<'a> TagsApi<'a> {
     /// `GET /accounts/{account_id}/tags`. The returned builder documents the
     /// optional query parameters and complete response payload in
     /// [`ListTagsRequest::send`].
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListTagsRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListTagsRequest::send`] for the JSON response example.
     pub fn list(&self) -> ListTagsRequest<'_> {
         ListTagsRequest {
             http: self.http,

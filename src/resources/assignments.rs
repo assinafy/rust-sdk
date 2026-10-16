@@ -7,12 +7,47 @@ use crate::error::{Error, Result};
 use crate::http::HttpClient;
 use crate::models::{
     Assignment, AssignmentMethod, CostEstimate, NotificationMethod, ResendNotificationResult,
-    SignDocumentItem, VerificationMethod, WhatsAppNotification,
+    SignDocumentItem, SignerIdentityReview, VerificationMethod, WhatsAppNotification,
 };
 use crate::pagination::Page;
 
 fn reset_expiration_payload(new_expires_at: Option<&str>) -> serde_json::Value {
     serde_json::json!({ "expires_at": new_expires_at })
+}
+
+/// Account review decision for a signer whose identity verification is `InReview`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IdentityReviewDecision {
+    /// Approve the identity so certification can proceed after every signer finishes.
+    Approved,
+    /// Cancel the document and notify every signer and copy receiver.
+    Rejected,
+}
+
+/// Body for `POST /documents/{id}/assignments/{id}/signers/{id}/identity-verification/review`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityReviewBody {
+    /// Approval or rejection decision.
+    pub decision: IdentityReviewDecision,
+    /// Private reviewer note, never shown to signers or copy receivers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl IdentityReviewBody {
+    /// Make an explicit approval or rejection decision.
+    pub fn new(decision: IdentityReviewDecision) -> Self {
+        Self {
+            decision,
+            note: None,
+        }
+    }
+
+    /// Attach a private reviewer note.
+    pub fn note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
 }
 
 /// Per-signer override used when creating an assignment.
@@ -440,6 +475,14 @@ impl<'a> AssignmentsApi<'a> {
     ///
     /// [`ListAssignmentsRequest::send`] documents the response payload and
     /// pagination headers.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListAssignmentsRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListAssignmentsRequest::send`] for the JSON response example.
     pub fn list<S: Into<String>>(&self, account_id: S) -> ListAssignmentsRequest<'_> {
         ListAssignmentsRequest {
             http: self.http,
@@ -454,6 +497,14 @@ impl<'a> AssignmentsApi<'a> {
     /// `GET /assignments`, with only the documented pagination parameters.
     /// [`ListAssignmentsRequest::send`] documents the response payload and
     /// pagination headers.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListAssignmentsRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListAssignmentsRequest::send`] for the JSON response example.
     pub fn list_current(&self) -> ListAssignmentsRequest<'_> {
         ListAssignmentsRequest {
             http: self.http,
@@ -743,6 +794,164 @@ impl<'a> AssignmentsApi<'a> {
             "whatsapp-notifications",
         ])?;
         let req = self.http.request(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+
+    fn identity_path(
+        &self,
+        document_id: &str,
+        assignment_id: &str,
+        signer_id: &str,
+        rest: &[&str],
+    ) -> Result<String> {
+        let mut segments = vec![
+            "documents",
+            document_id,
+            "assignments",
+            assignment_id,
+            "signers",
+            signer_id,
+            "identity-verification",
+        ];
+        segments.extend_from_slice(rest);
+        self.http.path(&segments)
+    }
+
+    /// Read a signer's identity verification evidence and account review state.
+    ///
+    /// `GET /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/identity-verification`.
+    /// Uses workspace authentication. While `InReview`, the signer may sign but
+    /// certification waits for approval (`pending_identity_review` after all signers finish).
+    /// Evidence images are available only while the review is open.
+    ///
+    /// # Request payload
+    ///
+    /// No body or query. Supply the document, assignment and signer IDs in the route.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200, "message": "",
+    ///   "data": {
+    ///     "id": "verification-id", "status": "InReview", "provider": "AssinafyVerify",
+    ///     "verification_method": "IdDocumentFaceMatchBasic",
+    ///     "reason_codes": [{ "code": "NAME_MISMATCH", "description": "Name differs" }],
+    ///     "evidence_available": true,
+    ///     "expected": { "name": "Maria Silva", "cpf": null },
+    ///     "document": { "type": "CNH", "name": "MARIA SILVA", "cpf": null },
+    ///     "matches": { "cpf": null, "name": 0.52, "birth_date": null },
+    ///     "checks": [{ "name": "name", "result": "review", "score": 0.52, "reasons": ["NAME_MISMATCH"] }],
+    ///     "images": ["document_front", "document_back", "face"],
+    ///     "ruleset_version": "2026-10-12.2", "evidence_sha256": null,
+    ///     "reviewed_by": null, "reviewed_at": null, "review_note": null, "completed_at": null
+    ///   }
+    /// }
+    /// ```
+    pub async fn identity_verification<D: AsRef<str>, A: AsRef<str>, S: AsRef<str>>(
+        &self,
+        document_id: D,
+        assignment_id: A,
+        signer_id: S,
+    ) -> Result<SignerIdentityReview> {
+        let path = self.identity_path(
+            document_id.as_ref(),
+            assignment_id.as_ref(),
+            signer_id.as_ref(),
+            &[],
+        )?;
+        let req = self.http.request_workspace(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+
+    /// Download one evidence image or document PDF for an open identity review.
+    ///
+    /// `GET /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/identity-verification/images/{name}`.
+    /// Uses workspace authentication. Pass a name from the review's `images`:
+    /// `document_front`, `document_back`, `document_pdf` or `face`. Once the review
+    /// is decided, the API returns `404`. Returns bytes and the response content type.
+    ///
+    /// # Request payload
+    ///
+    /// No body or query. Supply resource IDs and the evidence name in the route.
+    ///
+    /// # Response payload
+    ///
+    /// ```text
+    /// Content-Type: image/jpeg (or image/png, application/pdf)
+    /// <raw evidence bytes>
+    /// ```
+    pub async fn download_identity_image<
+        D: AsRef<str>,
+        A: AsRef<str>,
+        S: AsRef<str>,
+        N: AsRef<str>,
+    >(
+        &self,
+        document_id: D,
+        assignment_id: A,
+        signer_id: S,
+        name: N,
+    ) -> Result<(bytes::Bytes, String)> {
+        let path = self.identity_path(
+            document_id.as_ref(),
+            assignment_id.as_ref(),
+            signer_id.as_ref(),
+            &["images", name.as_ref()],
+        )?;
+        let req = self.http.request_workspace(Method::GET, &path)?;
+        self.http.send_download(req).await
+    }
+
+    /// Approve or reject a signer's identity verification under account review.
+    ///
+    /// `POST /documents/{document_id}/assignments/{assignment_id}/signers/{signer_id}/identity-verification/review`.
+    /// Uses workspace authentication. Requires `InReview` and a document in
+    /// `pending_signature` or `pending_identity_review`. Approval allows certification
+    /// after all signatures and reviews finish. Rejection cancels the document
+    /// (`rejected_by_user`) and notifies all signers and copy receivers. The note is private.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// { "decision": "Approved", "note": "Identity checked" }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200, "message": "",
+    ///   "data": {
+    ///     "id": "verification-id", "status": "Approved", "provider": "AssinafyVerify",
+    ///     "verification_method": "IdDocumentFaceMatchBasic",
+    ///     "reason_codes": [{ "code": "NAME_MISMATCH", "description": "Name differs" }],
+    ///     "evidence_available": true,
+    ///     "expected": { "name": "Maria Silva", "cpf": null },
+    ///     "document": { "type": "CNH", "name": "MARIA SILVA", "cpf": null },
+    ///     "matches": { "cpf": null, "name": 0.52, "birth_date": null },
+    ///     "checks": [{ "name": "name", "result": "review", "score": 0.52, "reasons": ["NAME_MISMATCH"] }],
+    ///     "images": [], "ruleset_version": "2026-10-12.2", "evidence_sha256": null,
+    ///     "reviewed_by": { "id": "user-id", "name": "Maria Silva" },
+    ///     "reviewed_at": "2026-10-16T12:00:00Z", "review_note": "Identity checked",
+    ///     "completed_at": "2026-10-16T12:00:00Z"
+    ///   }
+    /// }
+    /// ```
+    pub async fn review_identity_verification<D: AsRef<str>, A: AsRef<str>, S: AsRef<str>>(
+        &self,
+        document_id: D,
+        assignment_id: A,
+        signer_id: S,
+        body: &IdentityReviewBody,
+    ) -> Result<SignerIdentityReview> {
+        let path = self.identity_path(
+            document_id.as_ref(),
+            assignment_id.as_ref(),
+            signer_id.as_ref(),
+            &["review"],
+        )?;
+        let req = self.http.request_workspace(Method::POST, &path)?.json(body);
         self.http.send_envelope(req).await
     }
 

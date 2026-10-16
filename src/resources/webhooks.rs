@@ -510,13 +510,47 @@ impl<'a> WebhooksApi<'a> {
         self.http.send_envelope(req).await
     }
 
+    /// Find endpoints registered with exactly the supplied URL.
+    ///
+    /// `GET /accounts/{account_id}/webhooks/endpoints`. Uses the `account:read`
+    /// OAuth scope. Returns an empty list when the URL is not registered.
+    ///
+    /// # Request payload
+    ///
+    /// No body. Query: `url=https://hooks.example.invalid/assinafy` (URL-encoded).
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200, "message": "",
+    ///   "data": [{
+    ///     "id": "endpoint-id", "name": "ERP",
+    ///     "url": "https://hooks.example.invalid/assinafy", "email": "user@example.invalid",
+    ///     "events": ["document_ready"], "is_active": true, "signing_enabled": true,
+    ///     "created_at": "2026-10-16T12:00:00Z", "updated_at": "2026-10-16T12:00:00Z"
+    ///   }]
+    /// }
+    /// ```
+    pub async fn list_endpoints_by_url(
+        &self,
+        url: impl AsRef<str>,
+    ) -> Result<Vec<WebhookEndpoint>> {
+        let req = self
+            .http
+            .request(Method::GET, &self.endpoint_path(&[])?)?
+            .query(&[("url", url.as_ref())]);
+        self.http.send_envelope(req).await
+    }
+
     /// Register a webhook endpoint.
     ///
     /// `POST /accounts/{account_id}/webhooks/endpoints`. `url`, `email` and
     /// `events` are required. Accounts have one endpoint, or up to three on
     /// paid plans; past the limit the API answers `403`, and a `url` already
-    /// used by another endpoint answers `400`. With `signing_enabled`, read the
-    /// generated secret with [`endpoint_secret`](Self::endpoint_secret).
+    /// used by another endpoint answers `400`. With `signing_enabled`, store
+    /// [`WebhookEndpoint::secret`] securely from this response. OAuth applications
+    /// cannot retrieve it later; if lost, delete and recreate that endpoint.
     ///
     /// # Request payload
     ///
@@ -545,6 +579,7 @@ impl<'a> WebhooksApi<'a> {
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": true,
     ///     "signing_enabled": true,
+    ///     "secret": "whsec_ZXhhbXBsZS1yZWRhY3RlZC1zZWNyZXQ=",
     ///     "created_at": "2026-10-01T12:00:00Z",
     ///     "updated_at": "2026-10-01T12:00:00Z"
     ///   }
@@ -649,6 +684,33 @@ impl<'a> WebhooksApi<'a> {
         self.http.send_no_content(req).await
     }
 
+    /// Delete the endpoint registered with exactly the supplied URL and free its slot.
+    ///
+    /// `DELETE /accounts/{account_id}/webhooks/endpoints`. Requires the
+    /// `webhooks:write` OAuth scope. Returns `404` when the URL is not registered.
+    ///
+    /// # Request payload
+    ///
+    /// No body. Query: `url=https://hooks.example.invalid/assinafy` (URL-encoded).
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// { "status": 200, "message": "", "data": [] }
+    /// ```
+    pub async fn delete_endpoint_by_url(&self, url: impl AsRef<str>) -> Result<()> {
+        if url.as_ref().trim().is_empty() {
+            return Err(Error::Validation(
+                "webhook endpoint URL must not be empty".into(),
+            ));
+        }
+        let req = self
+            .http
+            .request(Method::DELETE, &self.endpoint_path(&[])?)?
+            .query(&[("url", url.as_ref())]);
+        self.http.send_no_content(req).await
+    }
+
     /// Read the secret that signs deliveries to an endpoint.
     ///
     /// `GET /accounts/{account_id}/webhooks/endpoints/{endpoint_id}/secret`.
@@ -739,6 +801,14 @@ impl<'a> WebhooksApi<'a> {
     /// List webhook dispatch history.
     ///
     /// `GET /accounts/{account_id}/webhooks`.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListWebhookDispatchesRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListWebhookDispatchesRequest::send`] for the JSON response example.
     pub fn list_dispatches(&self) -> ListWebhookDispatchesRequest<'_> {
         ListWebhookDispatchesRequest {
             http: self.http,
@@ -862,6 +932,7 @@ fn verify_at(
     let key = secret
         .strip_prefix("whsec_")
         .and_then(|key| BASE64.decode(key).ok())
+        .filter(|key| !key.is_empty())
         .ok_or_else(|| invalid("secret is not a whsec_ base64 key"))?;
     let timestamp: u64 = webhook_timestamp
         .trim()
@@ -925,5 +996,14 @@ mod tests {
             .is_err()
         );
         assert!(verify_at(SECRET, ID, TIMESTAMP, "", BODY, NOW).is_err());
+    }
+
+    #[test]
+    fn rejects_a_signature_made_with_an_empty_key() {
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"").unwrap();
+        mac.update(format!("{ID}.{TIMESTAMP}.").as_bytes());
+        mac.update(BODY);
+        let signature = format!("v1,{}", BASE64.encode(mac.finalize().into_bytes()));
+        assert!(verify_at("whsec_", ID, TIMESTAMP, &signature, BODY, NOW).is_err());
     }
 }

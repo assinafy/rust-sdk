@@ -11,9 +11,12 @@ use bytes::Bytes;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::http::HttpClient;
-use crate::models::{ArtifactName, Document, SignDocumentItem, Signer, SignerSelf, SignerType};
+use crate::models::{
+    ArtifactName, Document, IdentityVerification, IdentityVerificationSession, SignDocumentItem,
+    Signer, SignerSelf, SignerType,
+};
 use crate::pagination::Page;
 
 /// Body for `POST /verify`.
@@ -385,6 +388,80 @@ impl<'a> SignerSelfApi<'a> {
         self.http.send_envelope(req).await
     }
 
+    /// Read the current signer's identity document verification state.
+    ///
+    /// `GET /signers/identity-verification`. Requires [`Auth::AccessCode`](crate::Auth::AccessCode).
+    /// `can_start` is true before any session exists or after `Expired`. A signer
+    /// in `InReview` may continue signing; the account review holds certification.
+    /// `Declined` and `Abandoned` require a new document and assignment.
+    ///
+    /// # Request payload
+    ///
+    /// No body. Query: `signer-access-code=example-redacted-access-code`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200, "message": "",
+    ///   "data": {
+    ///     "can_start": false, "status": "Pending",
+    ///     "url": "https://verify.example.invalid/c/session-id#t=example-redacted-token",
+    ///     "expires_at": "2026-10-16T12:00:00Z", "completed_at": null
+    ///   }
+    /// }
+    /// ```
+    pub async fn identity_verification(&self) -> Result<IdentityVerification> {
+        let req = self
+            .http
+            .request_signer(Method::GET, "signers/identity-verification")?;
+        self.http.send_envelope(req).await
+    }
+
+    /// Record explicit biometric-processing consent and open a hosted capture session.
+    ///
+    /// `POST /signers/identity-verification`. Requires [`Auth::AccessCode`](crate::Auth::AccessCode).
+    /// Pass `true` only after the signer consents. Open the returned bearer URL
+    /// unchanged, including its fragment; never log it or store it in the browser.
+    /// Only absent or expired sessions can be started. Restarting an expired
+    /// session is not billed again; a resend does not replace a live session.
+    ///
+    /// # Request payload
+    ///
+    /// Query: `signer-access-code=example-redacted-access-code`.
+    ///
+    /// ```json
+    /// { "consent": true }
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {
+    ///   "status": 200, "message": "",
+    ///   "data": {
+    ///     "id": "session-id",
+    ///     "url": "https://verify.example.invalid/c/session-id#t=example-redacted-token",
+    ///     "expires_at": "2026-10-16T12:00:00Z"
+    ///   }
+    /// }
+    /// ```
+    pub async fn start_identity_verification(
+        &self,
+        consent: bool,
+    ) -> Result<IdentityVerificationSession> {
+        if !consent {
+            return Err(Error::Validation(
+                "identity verification requires explicit biometric-processing consent".into(),
+            ));
+        }
+        let req = self
+            .http
+            .request_signer(Method::POST, "signers/identity-verification")?
+            .json(&serde_json::json!({ "consent": consent }));
+        self.http.send_envelope(req).await
+    }
+
     /// Accept the platform terms.
     ///
     /// `PUT /signers/accept-terms`.
@@ -686,6 +763,14 @@ impl<'a> SignerSelfApi<'a> {
     /// `GET /signers/{signer_id}/documents`. Requires [`crate::Auth::AccessCode`];
     /// use [`list_documents_as_workspace`](Self::list_documents_as_workspace)
     /// to read the same list with an API key or user token.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListSignerDocumentsRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListSignerDocumentsRequest::send`] for the JSON response example.
     pub fn list_documents<S: Into<String>>(&self, signer_id: S) -> ListSignerDocumentsRequest<'_> {
         self.signer_documents(signer_id.into(), false)
     }
@@ -696,6 +781,14 @@ impl<'a> SignerSelfApi<'a> {
     /// `GET /signers/{signer_id}/documents`. Same query and response as
     /// [`list_documents`](Self::list_documents); refuses an
     /// [`crate::Auth::AccessCode`] client.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListSignerDocumentsRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListSignerDocumentsRequest::send`] for the JSON response example.
     pub fn list_documents_as_workspace<S: Into<String>>(
         &self,
         signer_id: S,
@@ -776,6 +869,14 @@ impl<'a> SignerSelfApi<'a> {
     /// `GET /signers/{signer_id}/documents/search?search={term}`. Same query
     /// and response as [`search_documents`](Self::search_documents); refuses
     /// an [`crate::Auth::AccessCode`] client.
+    ///
+    /// # Request payload
+    ///
+    /// See [`Self::search_documents`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`Self::search_documents`] for the JSON response example.
     pub async fn search_documents_as_workspace<S: AsRef<str>, T: AsRef<str>>(
         &self,
         signer_id: S,

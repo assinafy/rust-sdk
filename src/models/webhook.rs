@@ -90,7 +90,7 @@ pub struct WebhookDispatch {
 /// A URL that receives the account's webhook events. Accounts have one
 /// endpoint, or up to three on paid plans; every active endpoint subscribed
 /// to an event receives it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct WebhookEndpoint {
     /// Endpoint identifier.
@@ -113,12 +113,33 @@ pub struct WebhookEndpoint {
     /// Whether deliveries carry a `webhook-signature` header.
     #[serde(default)]
     pub signing_enabled: bool,
+    /// Signing secret returned only when creating a signed endpoint. Store it
+    /// securely: OAuth applications cannot retrieve or rotate it later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     /// Creation timestamp.
     #[serde(default)]
     pub created_at: Option<serde_json::Value>,
     /// Last-modification timestamp.
     #[serde(default)]
     pub updated_at: Option<serde_json::Value>,
+}
+
+impl fmt::Debug for WebhookEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookEndpoint")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("url", &self.url)
+            .field("email", &self.email)
+            .field("events", &self.events)
+            .field("is_active", &self.is_active)
+            .field("signing_enabled", &self.signing_enabled)
+            .field("secret", &self.secret.as_ref().map(|_| "**redacted**"))
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 /// A webhook endpoint's Standard Webhooks signing secret (`whsec_…`).

@@ -117,6 +117,14 @@ impl<'a> ActivitiesApi<'a> {
     /// List activities for a document.
     ///
     /// `GET /documents/{documentId}/activities`.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListActivitiesRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListActivitiesRequest::send`] for the JSON response example.
     pub fn list<S: Into<String>>(&self, document_id: S) -> ListActivitiesRequest<'_> {
         ListActivitiesRequest {
             http: self.http,

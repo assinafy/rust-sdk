@@ -88,4 +88,8 @@ pub struct SignerSelf {
     /// signature for each document.
     #[serde(default)]
     pub is_signature_reusable: bool,
+    /// Verification required for this request. Identity document verification
+    /// uses the hosted capture flow instead of a six-digit OTP.
+    #[serde(default)]
+    pub verification_method: Option<super::VerificationMethod>,
 }

@@ -20,6 +20,7 @@ pub mod assignment;
 pub mod cost;
 pub mod document;
 pub mod field;
+pub mod identity;
 pub mod oauth;
 pub mod signer;
 pub mod tag;
@@ -42,6 +43,11 @@ pub use document::{
     DocumentVerification, PublicDocument,
 };
 pub use field::{FieldDefinition, FieldType, FieldValidationResult};
+pub use identity::{
+    IdentityReviewCheck, IdentityReviewDocument, IdentityReviewExpected, IdentityReviewMatches,
+    IdentityReviewReason, IdentityReviewer, IdentityVerification, IdentityVerificationSession,
+    IdentityVerificationStatus, SignerIdentityReview,
+};
 pub use oauth::{AuthorizationServerMetadata, ProtectedResourceMetadata, TokenResponse, UserInfo};
 pub use signer::{Signer, SignerSelf, SignerType};
 pub use tag::Tag;

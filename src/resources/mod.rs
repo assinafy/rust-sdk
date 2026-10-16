@@ -33,11 +33,11 @@ pub use accounts::{
     AccountApi, AccountsApi, CreateAccountBody, DocumentStatsQuery, NotificationSenderType,
     UpdateAccountBody, UploadLogoRequest,
 };
-pub use activities::ActivitiesApi;
+pub use activities::{ActivitiesApi, ListActivitiesRequest};
 pub use api_keys::{ApiKeyResponse, ApiKeysApi, CreateApiKeyBody};
 pub use assignments::{
     AssignmentEntry, AssignmentField, AssignmentsApi, CreateAssignmentBody, CreateAssignmentSigner,
-    EstimateAssignmentCostBody, ListAssignmentsRequest,
+    EstimateAssignmentCostBody, IdentityReviewBody, IdentityReviewDecision, ListAssignmentsRequest,
 };
 pub use auth::{
     AuthApi, ChangePasswordBody, EmailResult, LinkSocialLoginBody, LoginBody,

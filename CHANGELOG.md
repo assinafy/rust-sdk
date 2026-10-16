@@ -4,6 +4,25 @@ All notable changes to the `assinafy` crate are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [3.7.0] - 2026-10-16
+
+### Added
+
+- Hosted biometric identity verification with explicit consent, capture-session status and
+  account review, including evidence downloads and approval or rejection decisions.
+- `VerificationMethod::id_document_face_match_basic()` configures biometric verification
+  for assignment and template signers. Signer profiles expose the verification method and
+  assignment signers expose the identity verification status.
+- Webhook endpoint lookup and deletion by exact registered URL.
+- Public `ListActivitiesRequest` builder for document activity queries.
+- `WebhookEndpoint::secret` preserves the signing secret returned at creation and redacts
+  it from `Debug`, so OAuth applications can store it without a separate secret request.
+
+### Fixed
+
+- Webhook signature verification rejects an empty signing key.
+- Updated locked TLS and QUIC dependencies with security fixes.
+
 ## [3.6.1] - 2026-10-12
 
 ### Added

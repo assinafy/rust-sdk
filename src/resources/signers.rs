@@ -276,6 +276,14 @@ impl<'a> SignersApi<'a> {
     /// List signers. Returns a builder to apply pagination/search/sort.
     ///
     /// `GET /accounts/{account_id}/signers`.
+    ///
+    /// # Request payload
+    ///
+    /// See [`ListSignersRequest::send`] for the route and query fields.
+    ///
+    /// # Response payload
+    ///
+    /// See [`ListSignersRequest::send`] for the JSON response example.
     pub fn list(&self) -> ListSignersRequest<'_> {
         ListSignersRequest {
             http: self.http,
