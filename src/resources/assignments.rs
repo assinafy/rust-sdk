@@ -11,6 +11,10 @@ use crate::models::{
 };
 use crate::pagination::Page;
 
+/// Stable [`Error::Validation`] code returned when a digital-certificate
+/// signer is configured for a collect assignment.
+pub const DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE: &str = "digital_certificate_requires_virtual";
+
 fn reset_expiration_payload(new_expires_at: Option<&str>) -> serde_json::Value {
     serde_json::json!({ "expires_at": new_expires_at })
 }
@@ -105,6 +109,9 @@ impl CreateAssignmentSigner {
 ///
 /// New integrations should use `signers`. The `signer_ids` field remains
 /// available for legacy deployments that still accept that documented alias.
+/// A signer using [`VerificationMethod::DigitalCertificate`] requires
+/// [`AssignmentMethod::Virtual`]; collect assignments contain placed fields,
+/// which the certificate flow cannot complete.
 ///
 /// # Request payload
 ///
@@ -273,6 +280,23 @@ fn validate_create_assignment(body: &CreateAssignmentBody) -> Result<()> {
     } else if body.signer_ids.is_empty() {
         return Err(Error::Config(
             "assignment creation requires at least one signer".into(),
+        ));
+    }
+    validate_digital_certificate_method(body)?;
+    Ok(())
+}
+
+fn validate_digital_certificate_method(body: &CreateAssignmentBody) -> Result<()> {
+    if body.method == AssignmentMethod::Collect
+        && body.signers.iter().flatten().any(|signer| {
+            signer
+                .verification_method
+                .as_ref()
+                .is_some_and(|method| method.as_str() == "DigitalCertificate")
+        })
+    {
+        return Err(Error::Validation(
+            DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE.into(),
         ));
     }
     Ok(())
@@ -517,6 +541,9 @@ impl<'a> AssignmentsApi<'a> {
     /// Request signatures from one or more signers.
     ///
     /// `POST /documents/{document_id}/assignments`.
+    /// [`VerificationMethod::DigitalCertificate`] requires
+    /// [`AssignmentMethod::Virtual`]. A collect request with a certificate
+    /// signer is rejected locally with [`DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE`].
     ///
     /// # Request payload
     ///
@@ -569,6 +596,9 @@ impl<'a> AssignmentsApi<'a> {
     /// Estimate the cost of an assignment without creating it.
     ///
     /// `POST /documents/{document_id}/assignments/estimate-cost`.
+    /// [`VerificationMethod::DigitalCertificate`] requires
+    /// [`AssignmentMethod::Virtual`]. A collect request with a certificate
+    /// signer is rejected locally with [`DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE`].
     ///
     /// # Request payload
     ///
@@ -595,6 +625,7 @@ impl<'a> AssignmentsApi<'a> {
         document_id: S,
         body: &EstimateAssignmentCostBody,
     ) -> Result<CostEstimate> {
+        validate_digital_certificate_method(body)?;
         let path = self.http.path(&[
             "documents",
             document_id.as_ref(),
@@ -1100,22 +1131,60 @@ mod tests {
         assert!(validate_create_assignment(&legacy).is_ok());
     }
 
-    /// `collect` is priced per signer too, so the channels have to reach the wire.
     #[test]
-    fn collect_estimate_payload_carries_signers_and_entries() {
+    fn digital_certificate_requires_virtual_assignments() {
         let body = CreateAssignmentBody::from_signers(
             AssignmentMethod::Collect,
-            [CreateAssignmentSigner::default()
+            [CreateAssignmentSigner::new("signer-id")
                 .verification_method(VerificationMethod::DigitalCertificate)],
         );
-        let json = serde_json::to_value(EstimateAssignmentPayload::from(&body)).unwrap();
-        assert_eq!(
-            json,
-            serde_json::json!({
-                "method": "collect",
-                "signers": [{ "verification_method": "DigitalCertificate" }]
-            })
+        let Err(Error::Validation(code)) = validate_create_assignment(&body) else {
+            panic!("collect certificate assignment was accepted");
+        };
+        assert_eq!(code, DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE);
+
+        let other_variant = CreateAssignmentBody::from_signers(
+            AssignmentMethod::Collect,
+            [CreateAssignmentSigner::new("signer-id")
+                .verification_method(VerificationMethod::Other("DigitalCertificate".into()))],
         );
+        assert!(matches!(
+            validate_digital_certificate_method(&other_variant),
+            Err(Error::Validation(code)) if code == DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE
+        ));
+
+        let virtual_body = CreateAssignmentBody::from_signers(
+            AssignmentMethod::Virtual,
+            [CreateAssignmentSigner::new("signer-id")
+                .verification_method(VerificationMethod::DigitalCertificate)],
+        );
+        assert!(validate_create_assignment(&virtual_body).is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_and_estimate_reject_collect_certificate_before_sending() {
+        let client = crate::Client::builder()
+            .api_key("example-redacted-api-key")
+            .base_url(crate::BaseUrl::custom("http://127.0.0.1:0/v1").unwrap())
+            .build()
+            .unwrap();
+        let body = CreateAssignmentBody::from_signers(
+            AssignmentMethod::Collect,
+            [CreateAssignmentSigner::new("signer-id")
+                .verification_method(VerificationMethod::DigitalCertificate)],
+        );
+
+        assert!(matches!(
+            client.assignments().create("document-id", &body).await,
+            Err(Error::Validation(code)) if code == DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE
+        ));
+        assert!(matches!(
+            client
+                .assignments()
+                .estimate_cost("document-id", &body)
+                .await,
+            Err(Error::Validation(code)) if code == DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE
+        ));
     }
 
     /// A legacy `signer_ids` caller must still be priced for that many signers.

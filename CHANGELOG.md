@@ -4,6 +4,13 @@ All notable changes to the `assinafy` crate are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [3.7.1] - 2026-10-19
+
+### Fixed
+
+- Assignment creation and cost estimation now reject digital-certificate signers on collect
+  assignments before they can be invited or charged for an assignment they cannot complete.
+
 ## [3.7.0] - 2026-10-16
 
 ### Added

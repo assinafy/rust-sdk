@@ -37,7 +37,8 @@ pub use activities::{ActivitiesApi, ListActivitiesRequest};
 pub use api_keys::{ApiKeyResponse, ApiKeysApi, CreateApiKeyBody};
 pub use assignments::{
     AssignmentEntry, AssignmentField, AssignmentsApi, CreateAssignmentBody, CreateAssignmentSigner,
-    EstimateAssignmentCostBody, IdentityReviewBody, IdentityReviewDecision, ListAssignmentsRequest,
+    DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE, EstimateAssignmentCostBody, IdentityReviewBody,
+    IdentityReviewDecision, ListAssignmentsRequest,
 };
 pub use auth::{
     AuthApi, ChangePasswordBody, EmailResult, LinkSocialLoginBody, LoginBody,

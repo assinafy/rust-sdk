@@ -227,7 +227,9 @@ pub struct TemplateDocumentSigner {
     /// Legacy inline-signer field, unsupported by the current create endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
-    /// Verification method override.
+    /// Verification method override. `DigitalCertificate` is valid only for a
+    /// template role without placed signer fields, because that produces a
+    /// virtual assignment.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_method: Option<crate::models::VerificationMethod>,
     /// Notification method overrides.
@@ -322,7 +324,8 @@ impl TemplateDocumentSigner {
         self
     }
 
-    /// Set the verification method.
+    /// Set the verification method. `DigitalCertificate` requires a template
+    /// role without placed signer fields (a virtual assignment).
     pub fn verification_method(mut self, method: crate::models::VerificationMethod) -> Self {
         self.verification_method = Some(method);
         self

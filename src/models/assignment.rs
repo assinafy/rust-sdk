@@ -37,7 +37,9 @@ pub enum VerificationMethod {
     Email,
     /// WhatsApp code.
     Whatsapp,
-    /// ICP-Brasil digital certificate.
+    /// ICP-Brasil digital certificate. Requires a virtual assignment; collect
+    /// assignments and template roles with placed signer fields cannot be
+    /// completed by the certificate flow.
     DigitalCertificate,
     /// Skip verification (only allowed in specific configurations).
     Bypass,

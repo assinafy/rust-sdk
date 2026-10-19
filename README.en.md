@@ -517,6 +517,14 @@ Allowed pairings: `Email` → notified by `Email`; `Whatsapp` → notified by `W
 `DigitalCertificate` and `IdDocumentFaceMatchBasic` → notified by `Email` **or** `Whatsapp`. Only one notification method per
 signer.
 
+`DigitalCertificate` requires `AssignmentMethod::Virtual`. The certificate flow completes the
+signer's virtual item and cannot complete placed fields in a `Collect` assignment. Therefore,
+`assignments().estimate_cost` and `assignments().create` reject that combination before sending a
+request, with `Error::Validation` and the stable
+`DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE`. The same restriction applies to templates: do not
+assign `DigitalCertificate` to a role with placed signer fields; the generated assignment method is
+determined by the template layout.
+
 ```rust,no_run
 use assinafy::Client;
 use assinafy::models::{AssignmentMethod, NotificationMethod, VerificationMethod};

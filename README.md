@@ -515,6 +515,14 @@ Combinações permitidas: `Email` → notifica por `Email`; `Whatsapp` → notif
 `DigitalCertificate` e `IdDocumentFaceMatchBasic` → notificam por `Email` **ou** `Whatsapp`. Apenas um método de notificação
 por signatário.
 
+`DigitalCertificate` exige `AssignmentMethod::Virtual`. O fluxo do certificado conclui o item
+virtual do signatário e não consegue concluir campos posicionados de um assignment `Collect`.
+Por isso, `assignments().estimate_cost` e `assignments().create` recusam essa combinação antes de
+enviar a requisição, com `Error::Validation` e o código estável
+`DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE`. A mesma restrição vale para templates: não atribua
+`DigitalCertificate` a um papel que tenha campos de signatário posicionados; o método do assignment
+gerado é determinado pelo layout do template.
+
 ```rust,no_run
 use assinafy::Client;
 use assinafy::models::{AssignmentMethod, NotificationMethod, VerificationMethod};
