@@ -1,13 +1,15 @@
 //! Pure unit tests for the SDK that do not require network access.
 
 use assinafy::models::{
-    ArtifactName, AssignmentMethod, Document, DocumentStatus, NotificationMethod, PublicDocument,
-    TemplatePage, TemplateStatus, VerificationMethod,
+    ArtifactName, AssignmentMethod, ContractStatus, Document, DocumentContractDetails,
+    DocumentStatus, NotificationMethod, PublicDocument, TemplatePage, TemplateStatus,
+    VerificationMethod, WebhookDispatchKind, WebhookEvent,
 };
 use assinafy::resources::{
     ApiKeyResponse, ConfirmSignerDataBody, CreateAssignmentBody, CreateAssignmentSigner,
     EmailResult, LoginBody, RequestPasswordResetBody, SendTokenBody, SocialLoginBody,
-    TemplateDocumentSigner, UpdateTagBody, VerifyCodeBody,
+    TemplateDocumentSigner, UpdateContractBody, UpdateNotificationPreferencesBody, UpdateTagBody,
+    VerifyCodeBody,
 };
 use assinafy::{Auth, BaseUrl, Client, Envelope};
 
@@ -70,6 +72,41 @@ fn document_status_round_trips_known_and_unknown() {
     let s: DocumentStatus = serde_json::from_str("\"future_status\"").unwrap();
     assert_eq!(s, DocumentStatus::Unknown("future_status".to_owned()));
     assert_eq!(s.as_str(), "future_status");
+}
+
+#[test]
+fn contract_models_preserve_known_and_future_states() {
+    let details: DocumentContractDetails = serde_json::from_value(serde_json::json!({
+        "resource": "document_contract",
+        "document_id": "document-id",
+        "status": "future_status",
+        "has_extra_server_field": true
+    }))
+    .unwrap();
+    let DocumentContractDetails::Contract(contract) = details else {
+        panic!("expected contract terms");
+    };
+    assert_eq!(
+        contract.status,
+        ContractStatus::Unknown("future_status".into())
+    );
+
+    let update = UpdateContractBody::new()
+        .status(ContractStatus::Active)
+        .counterparty_name("Example Counterparty")
+        .clear_value()
+        .clear_external_references()
+        .updated_at("2026-10-23T12:00:00Z");
+    assert_eq!(
+        serde_json::to_value(update).unwrap(),
+        serde_json::json!({
+            "status": "active",
+            "counterparty_name": "Example Counterparty",
+            "value": null,
+            "external_references": null,
+            "updated_at": "2026-10-23T12:00:00Z"
+        })
+    );
 }
 
 #[test]
@@ -279,11 +316,19 @@ fn response_debug_redacts_bearer_and_signing_urls() {
         "id": "document-id", "name": "contract.pdf", "status": "metadata_ready",
         "artifacts": {"original": "https://example.invalid/private-token"},
         "signing_url": "https://example.invalid/private-token",
+        "verification_code": "example-redacted-verification-code",
+        "verification_url": "https://verify.example.invalid/example-redacted-verification-code",
+        "has_contract": true,
         "pages": [{"id": "page-id", "number": 1, "height": 100, "width": 100,
                    "download_url": "https://example.invalid/private-token"}]
     });
     let document: Document = serde_json::from_value(payload.clone()).unwrap();
     let public: PublicDocument = serde_json::from_value(payload.clone()).unwrap();
+    assert_eq!(document.has_contract, Some(true));
+    assert_eq!(
+        public.verification_code.as_deref(),
+        Some("example-redacted-verification-code")
+    );
     let page: TemplatePage = serde_json::from_value(payload["pages"][0].clone()).unwrap();
     let rendered = format!("{login:?} {signing_url:?} {document:?} {public:?} {page:?}");
     assert!(!rendered.contains("bearer-secret"));
@@ -613,11 +658,46 @@ fn account_decodes_list_and_by_id_shapes() {
     );
 
     // By-id shape: colors present (possibly null), no roles.
-    let by_id = r#"{"id":"acc1","name":"MT","primary_color":"2072b9","secondary_color":null,"created_at":"2026-05-12T18:05:11Z"}"#;
+    let by_id = r#"{"id":"acc1","name":"MT","primary_color":"2072b9","secondary_color":null,"limits":{"webhook_endpoints":3},"created_at":"2026-05-12T18:05:11Z"}"#;
     let a: Account = serde_json::from_str(by_id).unwrap();
     assert_eq!(a.primary_color.as_deref(), Some("2072b9"));
     assert_eq!(a.secondary_color, None);
+    assert_eq!(
+        a.limits.and_then(|limits| limits.webhook_endpoints),
+        Some(3)
+    );
     assert!(a.roles.is_empty());
+}
+
+#[test]
+fn contract_notification_preferences_are_typed_and_partial_updates_are_sparse() {
+    let preferences: assinafy::models::NotificationPreferences =
+        serde_json::from_value(serde_json::json!({
+            "DocumentCompleted": true,
+            "SignerDeclined": true,
+            "DocumentCancelled": true,
+            "DocumentAboutToExpire": true,
+            "DocumentExpired": true,
+            "DocumentExpirationReset": true,
+            "DocumentProcessingFailed": true,
+            "TemplateProcessingFailed": true,
+            "SignerWhatsappFailed": true,
+            "ContractRenewalNotice": false,
+            "ContractExpiring": true,
+            "ContractExpired": false,
+            "ContractRenewed": true
+        }))
+        .unwrap();
+    assert!(!preferences.contract_renewal_notice);
+    assert!(!preferences.contract_expired);
+
+    let update = UpdateNotificationPreferencesBody::new()
+        .contract_expiring(false)
+        .contract_renewed(true);
+    assert_eq!(
+        serde_json::to_value(update).unwrap(),
+        serde_json::json!({"ContractExpiring": false, "ContractRenewed": true})
+    );
 }
 
 #[test]
@@ -887,16 +967,48 @@ fn webhook_endpoint_models_parse_and_redact_secret() {
         "url": "https://hooks.example.invalid/a",
         "events": ["document_ready"],
         "is_active": true,
+        "is_held": true,
+        "held_since": 1790812800,
         "signing_enabled": true,
         "created_at": "2026-10-01T12:00:00Z"
     }))
     .unwrap();
-    assert!(endpoint.signing_enabled && endpoint.name.is_none());
+    assert!(endpoint.signing_enabled && endpoint.is_held && endpoint.name.is_none());
+    assert_eq!(endpoint.held_since, Some(1790812800));
 
     let secret: WebhookEndpointSecret =
         serde_json::from_value(serde_json::json!({ "secret": "whsec_sentinel-value" })).unwrap();
     assert_eq!(secret.secret, "whsec_sentinel-value");
     assert!(!format!("{secret:?}").contains("sentinel"));
+}
+
+#[test]
+fn webhook_delivery_models_cover_attempts_and_the_signed_event_body() {
+    let dispatch: assinafy::models::WebhookDispatch = serde_json::from_value(serde_json::json!({
+        "id": "dispatch-id",
+        "event": "document_ready",
+        "delivered": false,
+        "webhook_id": "delivery-id",
+        "attempt": 2,
+        "kind": "probe",
+        "will_retry": true
+    }))
+    .unwrap();
+    assert_eq!(dispatch.kind, Some(WebhookDispatchKind::Probe));
+    assert_eq!(dispatch.attempt, Some(2));
+    assert!(dispatch.will_retry);
+
+    let event: WebhookEvent = serde_json::from_value(serde_json::json!({
+        "id": 184467,
+        "event": "document_ready",
+        "created_at": 1790000000,
+        "subject": {"type": "User", "id": "user-id"},
+        "object": {"type": "Document", "id": "document-id"},
+        "account_id": "acc_1234567890abcdef12345678"
+    }))
+    .unwrap();
+    assert_eq!(event.created_at, 1790000000);
+    assert_eq!(event.object["id"], "document-id");
 }
 
 #[tokio::test]
@@ -972,7 +1084,7 @@ fn login_result_carries_a_two_factor_challenge() {
 fn signer_models_decode_government_id() {
     let signer: assinafy::models::Signer = serde_json::from_value(serde_json::json!({
         "resource": "signer", "id": "signer-id", "full_name": "Maria Silva",
-        "email": "signer@example.com", "whatsapp_phone_number": null,
+        "email": "user@example.invalid", "whatsapp_phone_number": null,
         "government_id": "123.456.789-09", "has_accepted_terms": false
     }))
     .unwrap();
@@ -980,13 +1092,13 @@ fn signer_models_decode_government_id() {
     assert_eq!(
         serde_json::to_value(
             assinafy::resources::CreateSignerBody::new("Maria Silva")
-                .email("signer@example.com")
+                .email("user@example.invalid")
                 .government_id("123.456.789-09")
         )
         .unwrap(),
         serde_json::json!({
             "full_name": "Maria Silva",
-            "email": "signer@example.com",
+            "email": "user@example.invalid",
             "government_id": "123.456.789-09"
         })
     );

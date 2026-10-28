@@ -9,7 +9,7 @@ Async, idiomatic Rust client for the [Assinafy](https://assinafy.com.br) electro
 API — a Brazilian document-signing platform.
 
 It covers the entire public REST surface documented at <https://api.assinafy.com.br/v1/docs>:
-accounts, signers, documents, assignments, templates, tags, fields, webhooks, activities, API
+accounts, signers, documents, assignments, templates, contract tracking, tags, fields, webhooks, activities, API
 keys, OAuth 2.1, and the signer-facing endpoints.
 
 ## Contents
@@ -31,6 +31,7 @@ keys, OAuth 2.1, and the signer-facing endpoints.
 - [Templates](#templates)
 - [Tags](#tags)
 - [Custom fields](#custom-fields)
+- [Contract tracking](#contract-tracking)
 - [Webhooks](#webhooks)
 - [Activities and artifacts](#activities-and-artifacts)
 - [Pagination](#pagination)
@@ -94,6 +95,7 @@ at start-up and reuse it.
 | Signer (self) | `Client::signer_self` |
 | Documents | `Client::documents` |
 | Assignments | `Client::assignments` |
+| Contract tracking | `Client::contracts` |
 | Tags | `Client::tags` |
 | Fields | `Client::fields` |
 | Templates | `Client::templates` |
@@ -864,6 +866,94 @@ async fn fields(account: &str) -> assinafy::Result<()> {
 }
 ```
 
+## Contract tracking
+
+Contract tracking stores commercial terms on a document, follows their lifecycle, and links signed
+amendment, renewal, or termination instruments to the root contract. It is plan-gated. Reads remain
+available after the plan changes; writes may return `403`. Use the `updated_at` returned by a read as
+an optimistic precondition when two systems may edit the same contract: a stale write returns `409`
+without changing anything.
+
+```rust,no_run
+use assinafy::Client;
+use assinafy::models::{ContractRelationType, ContractStatus, DocumentContractDetails};
+use assinafy::resources::{RenewContractBody, TerminateContractBody, UpdateContractBody};
+
+async fn track_contract(
+    account: &str,
+    document: &str,
+    amendment_document: &str,
+) -> assinafy::Result<()> {
+    let client = Client::from_api_key("redacted-api-key")?;
+    let contracts = client.contracts(account);
+
+    // Create or partially update the terms. Omitted fields stay unchanged;
+    // `clear_*` setters send JSON null for fields the API allows you to clear.
+    let saved = contracts
+        .update(
+            document,
+            &UpdateContractBody::new()
+                .status(ContractStatus::Active)
+                .counterparty_name("Example Counterparty")
+                .value(120_000.50)
+                .currency("BRL")
+                .start_date("2026-11-01")
+                .end_date("2027-10-31")
+                .auto_renew(true)
+                .renewal_term_months(12)
+                .notice_period_days(30),
+        )
+        .await?;
+    let DocumentContractDetails::Contract(contract) = saved else {
+        return Ok(());
+    };
+
+    // Catch up after a missed webhook by paging contracts ordered by update time.
+    let active = contracts
+        .list()
+        .statuses([ContractStatus::Active])
+        .ending_within_days(45)
+        .sort("-updated_at")
+        .send()
+        .await?;
+    println!("{} active contracts end within 45 days", active.data.len());
+
+    // Link a separate document as an amendment. Its delta reaches the parent
+    // only after this instrument is certificated.
+    contracts
+        .update(
+            amendment_document,
+            &UpdateContractBody::new()
+                .parent_document_id(document)
+                .relation_type(ContractRelationType::Amendment)
+                .value(130_000.00)
+                .end_date("2028-06-30"),
+        )
+        .await?;
+    let family = contracts.related(amendment_document).await?;
+    println!("{} linked instruments", family.amendments.len());
+
+    // The current term makes renewal safe to retry: a repeat cannot renew twice.
+    let mut renewal = RenewContractBody::from_term(contract.term).value(126_000.00);
+    if let Some(updated_at) = contract.updated_at {
+        renewal = renewal.updated_at(updated_at);
+    }
+    let renewed = contracts.renew(document, &renewal).await?;
+
+    let mut termination = TerminateContractBody::new().reason("Supplier replaced");
+    if let Some(updated_at) = renewed.updated_at {
+        termination = termination.updated_at(updated_at);
+    }
+    contracts.terminate(document, &termination).await?;
+    Ok(())
+}
+```
+
+`Document::has_contract` lets a workspace document page decide whether to read the contract
+section. `ContractsApi::get` returns `DocumentContractDetails::Contract` for root terms or
+`DocumentContractDetails::Amendment` for a linked instrument. Contract lifecycle e-mails are
+controlled through the four `contract_*` setters on `UpdateNotificationPreferencesBody`.
+
 ## Webhooks
 
 Each account has one webhook endpoint, or up to three on paid plans. Every active endpoint
@@ -929,6 +1019,7 @@ and `inactivate` keep operating on the account's oldest endpoint.
 In the receiver, verify the **raw** body, exactly as received, before parsing it:
 
 ```rust
+use assinafy::models::WebhookEvent;
 use assinafy::resources::verify_webhook_signature;
 
 fn receive(
@@ -937,7 +1028,7 @@ fn receive(
     timestamp: &str,
     signature: &str,
     body: &[u8],
-) -> assinafy::Result<serde_json::Value> {
+) -> assinafy::Result<WebhookEvent> {
     verify_webhook_signature(secret, id, timestamp, signature, body)?;
     Ok(serde_json::from_slice(body)?)
 }
@@ -1061,6 +1152,7 @@ appear in `Display`/`Debug` — the URL is stripped from transport errors, and t
 | Signers | `create`, `list`, `get`, `update`, `delete` |
 | Documents | `statuses`, `list`, `upload`, `search`, `get`, `rename`, `delete`, `download_artifact`, `download_thumbnail`, `download_page`, `verify` |
 | Assignments | `list`, `list_current`, `create`, `estimate_cost`, `reset_expiration`, `reset_expiration_at`, `resend_to_signer`, `estimate_resend_cost`, `whatsapp_notifications`, `identity_verification`, `download_identity_image`, `review_identity_verification`, `sign`, `reject` |
+| Contracts | `list`, `get`, `update`, `related`, `renew`, `terminate` |
 | Tags | `list`, `create`, `update`, `delete`, `delete_with_force`, `list_for_document`, `add_to_document`, `set_on_document`, `remove_from_document` |
 | Fields | `create`, `list`, `get`, `update`, `delete`, `validate`, `validate_multiple`, `list_types` |
 | Templates | `list`, `get`, `create`, `update`, `delete`, `download_page`, `create_document`, `estimate_cost` |

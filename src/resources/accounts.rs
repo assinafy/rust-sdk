@@ -297,6 +297,7 @@ impl<'a> AccountApi<'a> {
     ///   "id": "102d25a4a1b2c3d4e5f60718", "name": "Example Workspace",
     ///   "primary_color": null, "secondary_color": null,
     ///   "notification_sender_type": "User",
+    ///   "limits": { "webhook_endpoints": 1 },
     ///   "created_at": "2026-05-12T18:05:11Z" } }
     /// ```
     pub async fn get(&self) -> Result<Account> {
@@ -323,6 +324,7 @@ impl<'a> AccountApi<'a> {
     ///   "id": "102d25a4a1b2c3d4e5f60718", "name": "New name",
     ///   "primary_color": null, "secondary_color": null,
     ///   "notification_sender_type": "User",
+    ///   "limits": { "webhook_endpoints": 1 },
     ///   "created_at": "2026-05-12T18:05:11Z" } }
     /// ```
     pub async fn update(&self, body: &UpdateAccountBody) -> Result<Account> {

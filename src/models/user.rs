@@ -68,6 +68,7 @@ impl From<UserAccount> for Account {
             primary_color: None,
             secondary_color: None,
             notification_sender_type: None,
+            limits: None,
             created_at: Some(ua.created_at),
         }
     }
@@ -107,7 +108,11 @@ pub struct SelfUser {
 ///   "DocumentExpirationReset": true,
 ///   "DocumentProcessingFailed": true,
 ///   "TemplateProcessingFailed": true,
-///   "SignerWhatsappFailed": true
+///   "SignerWhatsappFailed": true,
+///   "ContractRenewalNotice": true,
+///   "ContractExpiring": true,
+///   "ContractExpired": true,
+///   "ContractRenewed": true
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +145,22 @@ pub struct NotificationPreferences {
     /// A WhatsApp notification to a signer could not be delivered.
     #[serde(rename = "SignerWhatsappFailed")]
     pub signer_whatsapp_failed: bool,
+    /// A tracked contract entered its notice period.
+    #[serde(rename = "ContractRenewalNotice", default = "default_true")]
+    pub contract_renewal_notice: bool,
+    /// A tracked contract ends in 45 or 30 days.
+    #[serde(rename = "ContractExpiring", default = "default_true")]
+    pub contract_expiring: bool,
+    /// A tracked contract ended without renewal.
+    #[serde(rename = "ContractExpired", default = "default_true")]
+    pub contract_expired: bool,
+    /// A tracked contract was automatically renewed.
+    #[serde(rename = "ContractRenewed", default = "default_true")]
+    pub contract_renewed: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Payload returned by [`AuthApi::login`](crate::resources::AuthApi::login),

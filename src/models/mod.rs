@@ -17,6 +17,7 @@
 pub mod account;
 pub mod activity;
 pub mod assignment;
+pub mod contract;
 pub mod cost;
 pub mod document;
 pub mod field;
@@ -28,7 +29,7 @@ pub mod template;
 pub mod user;
 pub mod webhook;
 
-pub use account::{Account, AccountTheme, DocumentStatsRow, NotificationSenderType};
+pub use account::{Account, AccountLimits, AccountTheme, DocumentStatsRow, NotificationSenderType};
 pub use activity::{Activity, ActivityOrigin};
 pub use assignment::{
     Assignment, AssignmentItem, AssignmentItemField, AssignmentItemSigner, AssignmentMethod,
@@ -36,6 +37,10 @@ pub use assignment::{
     NotificationHistoryEntry, NotificationMethod, NotificationStatus, ResendCostBreakdownItem,
     ResendCostEstimate, ResendNotificationResult, SignDocumentItem, SigningUrl, VerificationMethod,
     WhatsAppButton, WhatsAppNotification,
+};
+pub use contract::{
+    ContractAmendmentStatus, ContractExternalReference, ContractRelationType, ContractStatus,
+    DocumentContract, DocumentContractAmendment, DocumentContractDetails,
 };
 pub use cost::{BlockingReason, CostBreakdownItem, CostEstimate};
 pub use document::{
@@ -59,6 +64,6 @@ pub use user::{
     TotpEnrollment, UserAccount, UserProfile,
 };
 pub use webhook::{
-    WebhookDispatch, WebhookEndpoint, WebhookEndpointSecret, WebhookEventTypeInfo,
-    WebhookSubscription,
+    WebhookDispatch, WebhookDispatchKind, WebhookEndpoint, WebhookEndpointSecret, WebhookEvent,
+    WebhookEventTypeInfo, WebhookSubscription,
 };

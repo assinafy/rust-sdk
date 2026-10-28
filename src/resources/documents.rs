@@ -377,7 +377,9 @@ impl<'a> DocumentsApi<'a> {
     ///   "artifacts": {
     ///     "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original",
     ///     "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail" },
-    ///   "is_closed": false, "tags": [], "assignment": null,
+    ///   "is_closed": false, "signing_url": null,
+    ///   "verification_code": null, "verification_url": null,
+    ///   "has_contract": true, "tags": [], "assignment": null,
     ///   "pages": [ { "id": "103acccd7080eeee6abb709dfa0e", "number": 1, "width": 1275, "height": 1651,
     ///     "download_url": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/pages/103acccd7080eeee6abb709dfa0e/download" } ] } }
     /// ```

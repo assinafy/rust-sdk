@@ -4,6 +4,18 @@ All notable changes to the `assinafy` crate are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [3.8.0] - 2026-10-28
+
+### Added
+
+- Contract tracking for listing, reading, updating, relating, renewing and terminating document
+  contracts, including typed terms, amendments, external references and optimistic write
+  preconditions.
+- Contract lifecycle notification preferences and `Document::has_contract`.
+- Typed webhook event bodies, delivery attempt metadata, endpoint hold state and workspace webhook
+  endpoint limits.
+- Document verification codes and public verification URLs on document models.
+
 ## [3.7.1] - 2026-10-19
 
 ### Fixed

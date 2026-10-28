@@ -4,6 +4,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use super::ActivityOrigin;
+
 /// The account's oldest webhook endpoint, as returned by the subscription routes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -24,6 +26,12 @@ pub struct WebhookSubscription {
     /// Whether delivery is active.
     #[serde(default)]
     pub is_active: bool,
+    /// Whether delivery is paused after repeated failures.
+    #[serde(default)]
+    pub is_held: bool,
+    /// Unix timestamp when the delivery pause began.
+    #[serde(default)]
+    pub held_since: Option<i64>,
     /// Creation timestamp.
     #[serde(default)]
     pub created_at: Option<serde_json::Value>,
@@ -41,6 +49,21 @@ pub struct WebhookEventTypeInfo {
     /// Human-readable event description.
     #[serde(default)]
     pub description: String,
+}
+
+/// Kind of webhook delivery attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookDispatchKind {
+    /// Delivery made when the event occurred.
+    Scheduled,
+    /// Probe sent to test a paused endpoint.
+    Probe,
+    /// Delivery requested through the retry endpoint.
+    Manual,
+    /// A server value not yet modeled by the SDK.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// Webhook delivery history row.
@@ -70,6 +93,19 @@ pub struct WebhookDispatch {
     /// Whether delivery succeeded.
     #[serde(default)]
     pub delivered: bool,
+    /// Stable `webhook-id` shared by every attempt of this event to this
+    /// endpoint.
+    #[serde(default)]
+    pub webhook_id: Option<String>,
+    /// 1-based attempt number.
+    #[serde(default)]
+    pub attempt: Option<u32>,
+    /// Whether this was a scheduled delivery, probe, or manual retry.
+    #[serde(default)]
+    pub kind: Option<WebhookDispatchKind>,
+    /// Whether another automatic attempt follows this one.
+    #[serde(default)]
+    pub will_retry: bool,
     /// HTTP status returned by the endpoint, when available.
     #[serde(default)]
     pub http_status: Option<u16>,
@@ -93,6 +129,9 @@ pub struct WebhookDispatch {
 #[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct WebhookEndpoint {
+    /// Resource discriminator (`"activity_event_subscription"`) when present.
+    #[serde(default)]
+    pub resource: Option<String>,
     /// Endpoint identifier.
     pub id: String,
     /// Label that tells endpoints apart.
@@ -110,6 +149,12 @@ pub struct WebhookEndpoint {
     /// Whether events are delivered.
     #[serde(default)]
     pub is_active: bool,
+    /// Whether delivery is paused after repeated failures.
+    #[serde(default)]
+    pub is_held: bool,
+    /// Unix timestamp when the delivery pause began.
+    #[serde(default)]
+    pub held_since: Option<i64>,
     /// Whether deliveries carry a `webhook-signature` header.
     #[serde(default)]
     pub signing_enabled: bool,
@@ -128,18 +173,52 @@ pub struct WebhookEndpoint {
 impl fmt::Debug for WebhookEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WebhookEndpoint")
+            .field("resource", &self.resource)
             .field("id", &self.id)
             .field("name", &self.name)
             .field("url", &self.url)
             .field("email", &self.email)
             .field("events", &self.events)
             .field("is_active", &self.is_active)
+            .field("is_held", &self.is_held)
+            .field("held_since", &self.held_since)
             .field("signing_enabled", &self.signing_enabled)
             .field("secret", &self.secret.as_ref().map(|_| "**redacted**"))
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
             .finish()
     }
+}
+
+/// Body delivered to a webhook endpoint.
+///
+/// Verify the Standard Webhooks signature over the raw body before parsing it
+/// into this type. Unlike REST responses, timestamps in webhook payloads are
+/// Unix seconds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct WebhookEvent {
+    /// Activity identifier that produced the event.
+    pub id: i64,
+    /// Event type.
+    pub event: String,
+    /// Reserved human-readable message.
+    #[serde(default)]
+    pub message: Option<String>,
+    /// Event-specific parameters.
+    #[serde(default)]
+    pub payload: Option<serde_json::Value>,
+    /// Request origin, when the event was triggered by a request.
+    #[serde(default)]
+    pub origin: Option<ActivityOrigin>,
+    /// Time the event was recorded, as Unix seconds.
+    pub created_at: i64,
+    /// Actor that performed the action, including its `type` discriminator.
+    pub subject: serde_json::Value,
+    /// Resource acted on, including its `type` discriminator.
+    pub object: serde_json::Value,
+    /// Workspace that owns the event.
+    pub account_id: String,
 }
 
 /// A webhook endpoint's Standard Webhooks signing secret (`whsec_…`).

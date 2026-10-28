@@ -7,9 +7,9 @@ use crate::config::BaseUrl;
 use crate::error::{Error, Result};
 use crate::http::{HttpClient, transport};
 use crate::resources::{
-    AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, DocumentsApi,
-    FieldsApi, OAuthApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, UsersApi,
-    WebhooksApi,
+    AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, ContractsApi,
+    DocumentsApi, FieldsApi, OAuthApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi,
+    UsersApi, WebhooksApi,
 };
 
 /// Default user-agent used by the SDK.
@@ -136,6 +136,11 @@ impl Client {
     /// Assignment (signature-request) endpoints.
     pub fn assignments(&self) -> AssignmentsApi<'_> {
         AssignmentsApi::new(&self.http)
+    }
+
+    /// Contract tracking within an account.
+    pub fn contracts<S: Into<String>>(&self, account_id: S) -> ContractsApi<'_> {
+        ContractsApi::new(&self.http, account_id.into())
     }
 
     /// Tag CRUD and document tag operations.

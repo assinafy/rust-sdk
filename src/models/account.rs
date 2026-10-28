@@ -11,6 +11,15 @@ pub enum NotificationSenderType {
     Account,
 }
 
+/// Limits imposed by a workspace's current plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AccountLimits {
+    /// Maximum number of webhook endpoints the workspace may create.
+    #[serde(default)]
+    pub webhook_endpoints: Option<u32>,
+}
+
 /// A workspace / billing account that owns documents, signers, tags, etc.
 ///
 /// Returned by the account endpoints. The exact field set depends on the
@@ -42,6 +51,7 @@ pub enum NotificationSenderType {
 ///   "primary_color": null,
 ///   "secondary_color": null,
 ///   "notification_sender_type": "User",
+///   "limits": { "webhook_endpoints": 1 },
 ///   "created_at": "2026-05-12T18:05:11Z"
 /// }
 /// ```
@@ -74,6 +84,10 @@ pub struct Account {
     /// Actor shown as the sender of signature-request notifications.
     #[serde(default)]
     pub notification_sender_type: Option<NotificationSenderType>,
+    /// Limits of the workspace's current plan. Returned only by the by-id
+    /// account endpoint.
+    #[serde(default)]
+    pub limits: Option<AccountLimits>,
     /// ISO-8601 creation timestamp.
     #[serde(default)]
     pub created_at: Option<String>,

@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use hmac::{Hmac, KeyInit, Mac};
+use hmac::{Hmac, Mac};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -38,7 +38,7 @@ fn default_events() -> Vec<String> {
 ///
 /// ```json
 /// {
-///   "url": "https://hooks.example.com/assinafy",
+///   "url": "https://hooks.example.invalid/assinafy",
 ///   "email": "user@example.invalid",
 ///   "events": ["document_ready", "signer_signed_document"],
 ///   "is_active": true
@@ -99,7 +99,7 @@ impl RegisterWebhookBody {
 ///
 /// ```json
 /// {
-///   "url": "https://hooks.example.com/assinafy",
+///   "url": "https://hooks.example.invalid/assinafy",
 ///   "email": "user@example.invalid",
 ///   "events": ["document_ready", "signer_signed_document"],
 ///   "name": "ERP",
@@ -281,9 +281,13 @@ impl<'a> ListWebhookDispatchesRequest<'a> {
     ///       "event": "signature_requested",
     ///       "activity_id": 8629,
     ///       "endpoint_id": "65f1c2a9b3e4d5f60718293a4b5c6d7e",
-    ///       "endpoint": "https://httpbin.org/anything",
+    ///       "endpoint": "https://hooks.example.invalid/assinafy",
     ///       "payload": { "id": 8629, "event": "signature_requested", "object": {} },
     ///       "delivered": true,
+    ///       "webhook_id": "9f86d081884c7d659a2feaa0c55ad015",
+    ///       "attempt": 1,
+    ///       "kind": "scheduled",
+    ///       "will_retry": false,
     ///       "http_status": 200,
     ///       "response_body": "{\"ok\": true}",
     ///       "error": null,
@@ -354,7 +358,7 @@ impl<'a> WebhooksApi<'a> {
     ///
     /// ```json
     /// {
-    ///   "url": "https://hooks.example.com/assinafy",
+    ///   "url": "https://hooks.example.invalid/assinafy",
     ///   "email": "user@example.invalid",
     ///   "events": ["document_ready", "signer_signed_document"],
     ///   "is_active": true
@@ -370,7 +374,9 @@ impl<'a> WebhooksApi<'a> {
     ///   "data": {
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": true,
-    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "is_held": false,
+    ///     "held_since": null,
+    ///     "url": "https://hooks.example.invalid/assinafy",
     ///     "email": "user@example.invalid",
     ///     "updated_at": "2026-07-18T02:36:02Z"
     ///   }
@@ -409,7 +415,9 @@ impl<'a> WebhooksApi<'a> {
     ///   "data": {
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": false,
-    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "is_held": false,
+    ///     "held_since": null,
+    ///     "url": "https://hooks.example.invalid/assinafy",
     ///     "email": "user@example.invalid",
     ///     "updated_at": "2026-07-18T02:36:02Z"
     ///   }
@@ -448,7 +456,9 @@ impl<'a> WebhooksApi<'a> {
     ///   "data": {
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": false,
-    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "is_held": false,
+    ///     "held_since": null,
+    ///     "url": "https://hooks.example.invalid/assinafy",
     ///     "email": "user@example.invalid",
     ///     "updated_at": "2026-07-18T02:36:02Z"
     ///   }
@@ -492,12 +502,15 @@ impl<'a> WebhooksApi<'a> {
     ///   "message": "",
     ///   "data": [
     ///     {
+    ///       "resource": "activity_event_subscription",
     ///       "id": "65f1c2a9b3e4d5f60718293a4b5c6d7e",
     ///       "name": "ERP",
-    ///       "url": "https://hooks.example.com/assinafy",
+    ///       "url": "https://hooks.example.invalid/assinafy",
     ///       "email": "user@example.invalid",
     ///       "events": ["document_ready", "signer_signed_document"],
     ///       "is_active": true,
+    ///       "is_held": false,
+    ///       "held_since": null,
     ///       "signing_enabled": true,
     ///       "created_at": "2026-10-01T12:00:00Z",
     ///       "updated_at": "2026-10-01T12:00:00Z"
@@ -527,7 +540,8 @@ impl<'a> WebhooksApi<'a> {
     ///   "data": [{
     ///     "id": "endpoint-id", "name": "ERP",
     ///     "url": "https://hooks.example.invalid/assinafy", "email": "user@example.invalid",
-    ///     "events": ["document_ready"], "is_active": true, "signing_enabled": true,
+    ///     "events": ["document_ready"], "is_active": true, "is_held": false,
+    ///     "held_since": null, "signing_enabled": true,
     ///     "created_at": "2026-10-16T12:00:00Z", "updated_at": "2026-10-16T12:00:00Z"
     ///   }]
     /// }
@@ -556,7 +570,7 @@ impl<'a> WebhooksApi<'a> {
     ///
     /// ```json
     /// {
-    ///   "url": "https://hooks.example.com/assinafy",
+    ///   "url": "https://hooks.example.invalid/assinafy",
     ///   "email": "user@example.invalid",
     ///   "events": ["document_ready", "signer_signed_document"],
     ///   "name": "ERP",
@@ -572,12 +586,15 @@ impl<'a> WebhooksApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
+    ///     "resource": "activity_event_subscription",
     ///     "id": "65f1c2a9b3e4d5f60718293a4b5c6d7e",
     ///     "name": "ERP",
-    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "url": "https://hooks.example.invalid/assinafy",
     ///     "email": "user@example.invalid",
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": true,
+    ///     "is_held": false,
+    ///     "held_since": null,
     ///     "signing_enabled": true,
     ///     "secret": "whsec_ZXhhbXBsZS1yZWRhY3RlZC1zZWNyZXQ=",
     ///     "created_at": "2026-10-01T12:00:00Z",
@@ -608,12 +625,15 @@ impl<'a> WebhooksApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
+    ///     "resource": "activity_event_subscription",
     ///     "id": "65f1c2a9b3e4d5f60718293a4b5c6d7e",
     ///     "name": "ERP",
-    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "url": "https://hooks.example.invalid/assinafy",
     ///     "email": "user@example.invalid",
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": true,
+    ///     "is_held": false,
+    ///     "held_since": null,
     ///     "signing_enabled": true,
     ///     "created_at": "2026-10-01T12:00:00Z",
     ///     "updated_at": "2026-10-01T12:00:00Z"
@@ -643,12 +663,15 @@ impl<'a> WebhooksApi<'a> {
     ///   "status": 200,
     ///   "message": "",
     ///   "data": {
+    ///     "resource": "activity_event_subscription",
     ///     "id": "65f1c2a9b3e4d5f60718293a4b5c6d7e",
     ///     "name": "ERP",
-    ///     "url": "https://hooks.example.com/assinafy",
+    ///     "url": "https://hooks.example.invalid/assinafy",
     ///     "email": "user@example.invalid",
     ///     "events": ["document_ready", "signer_signed_document"],
     ///     "is_active": true,
+    ///     "is_held": false,
+    ///     "held_since": null,
     ///     "signing_enabled": true,
     ///     "created_at": "2026-10-01T12:00:00Z",
     ///     "updated_at": "2026-10-01T12:00:00Z"
@@ -835,8 +858,7 @@ impl<'a> WebhooksApi<'a> {
     ///
     /// # Response payload
     ///
-    /// The re-delivered dispatch, with refreshed `delivered`, `http_status`,
-    /// `response_body`, `error`, and `updated_at`.
+    /// The manual delivery attempt, with its attempt number and outcome.
     ///
     /// ```json
     /// {
@@ -847,9 +869,13 @@ impl<'a> WebhooksApi<'a> {
     ///     "event": "signature_requested",
     ///     "activity_id": 8629,
     ///     "endpoint_id": "65f1c2a9b3e4d5f60718293a4b5c6d7e",
-    ///     "endpoint": "https://httpbin.org/anything",
+    ///     "endpoint": "https://hooks.example.invalid/assinafy",
     ///     "payload": { "id": 8629, "event": "signature_requested", "object": {} },
     ///     "delivered": true,
+    ///     "webhook_id": "9f86d081884c7d659a2feaa0c55ad015",
+    ///     "attempt": 2,
+    ///     "kind": "manual",
+    ///     "will_retry": false,
     ///     "http_status": 200,
     ///     "response_body": "{\"ok\": true}",
     ///     "error": null,

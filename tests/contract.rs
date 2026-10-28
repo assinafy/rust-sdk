@@ -5,11 +5,13 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use assinafy::models::{
-    AssignmentMethod, IdentityVerificationStatus, NotificationMethod, VerificationMethod,
+    AssignmentMethod, ContractStatus, DocumentContractDetails, IdentityVerificationStatus,
+    NotificationMethod, VerificationMethod,
 };
 use assinafy::resources::{
     CreateAssignmentBody, CreateAssignmentSigner, CreateDocumentFromTemplateBody,
-    IdentityReviewBody, IdentityReviewDecision, TemplateDocumentSigner, WebhookEndpointBody,
+    IdentityReviewBody, IdentityReviewDecision, RenewContractBody, TemplateDocumentSigner,
+    TerminateContractBody, UpdateContractBody, WebhookEndpointBody,
 };
 use assinafy::{Auth, BaseUrl, Client, Error};
 use serde_json::{Value, json};
@@ -480,6 +482,185 @@ async fn webhook_url_lookup_and_delete_encode_the_exact_registered_url() {
             .unwrap()
             .webhooks("account")
             .delete_endpoint_by_url(" ")
+            .await,
+        Err(Error::Validation(_))
+    ));
+}
+
+#[tokio::test]
+async fn contract_tracking_routes_match_the_published_wire_contract() {
+    let contract = json!({
+        "resource": "document_contract",
+        "document_id": "document",
+        "status": "active",
+        "auto_renew": true,
+        "term": 1,
+        "external_references": [],
+        "updated_at": "2026-10-23T12:00:00Z"
+    });
+
+    let (client, server) = mock(json!([contract.clone()]));
+    let page = client
+        .with_auth(Auth::Bearer("sentinel-workspace-token".into()))
+        .contracts("account")
+        .list()
+        .statuses([ContractStatus::Active, ContractStatus::Expired])
+        .counterparty("Example Counterparty")
+        .search("Services")
+        .end_date_from("2027-01-01")
+        .end_date_to("2027-12-31")
+        .ending_within_days(30)
+        .external_system("hubspot")
+        .external_id("98765")
+        .sort("end_date")
+        .expand_document()
+        .page(2)
+        .per_page(50)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(page.data.len(), 1);
+    let request = server.join().unwrap();
+    assert_eq!(request.method, "GET");
+    assert_eq!(request.url.path(), "/v1/accounts/account/contracts");
+    assert_eq!(
+        request.url.query_pairs().collect::<Vec<_>>(),
+        [
+            ("status".into(), "active,expired".into()),
+            ("counterparty".into(), "Example Counterparty".into()),
+            ("search".into(), "Services".into()),
+            ("end_date_from".into(), "2027-01-01".into()),
+            ("end_date_to".into(), "2027-12-31".into()),
+            ("ending_within_days".into(), "30".into()),
+            ("external_system".into(), "hubspot".into()),
+            ("external_id".into(), "98765".into()),
+            ("sort".into(), "end_date".into()),
+            ("expand".into(), "document".into()),
+            ("page".into(), "2".into()),
+            ("per-page".into(), "50".into()),
+        ]
+    );
+    assert_eq!(
+        request.headers.get("authorization").map(String::as_str),
+        Some("Bearer sentinel-workspace-token")
+    );
+
+    let amendment = json!({
+        "resource": "document_contract_amendment",
+        "document_id": "amendment",
+        "document_name": "Amendment 1.pdf",
+        "parent_document_id": "document",
+        "relation_type": "amendment",
+        "status": "pending",
+        "document_status": "pending_signature"
+    });
+    let (client, server) = mock(amendment);
+    let details = client
+        .with_auth(Auth::Bearer("sentinel-workspace-token".into()))
+        .contracts("account")
+        .get("amendment")
+        .await
+        .unwrap();
+    assert!(matches!(details, DocumentContractDetails::Amendment(_)));
+    assert_workspace(
+        &server.join().unwrap(),
+        "GET",
+        "/v1/accounts/account/documents/amendment/contract",
+    );
+
+    let update = UpdateContractBody::new()
+        .counterparty_name("Example Counterparty")
+        .clear_value()
+        .updated_at("2026-10-23T12:00:00Z");
+    let (client, server) = mock(contract.clone());
+    client
+        .with_auth(Auth::Bearer("sentinel-workspace-token".into()))
+        .contracts("account")
+        .update("document", &update)
+        .await
+        .unwrap();
+    let request = server.join().unwrap();
+    assert_workspace(
+        &request,
+        "PUT",
+        "/v1/accounts/account/documents/document/contract",
+    );
+    assert_eq!(
+        request.body,
+        json!({
+            "counterparty_name": "Example Counterparty",
+            "value": null,
+            "updated_at": "2026-10-23T12:00:00Z"
+        })
+    );
+
+    let (client, server) = mock(contract.clone());
+    client
+        .with_auth(Auth::Bearer("sentinel-workspace-token".into()))
+        .contracts("account")
+        .related("amendment")
+        .await
+        .unwrap();
+    assert_workspace(
+        &server.join().unwrap(),
+        "GET",
+        "/v1/accounts/account/documents/amendment/contract/related",
+    );
+
+    let renew = RenewContractBody::from_term(1)
+        .value(126000.0)
+        .updated_at("2026-10-23T12:00:00Z");
+    let (client, server) = mock(contract.clone());
+    client
+        .with_auth(Auth::Bearer("sentinel-workspace-token".into()))
+        .contracts("account")
+        .renew("document", &renew)
+        .await
+        .unwrap();
+    let request = server.join().unwrap();
+    assert_workspace(
+        &request,
+        "POST",
+        "/v1/accounts/account/documents/document/contract/renew",
+    );
+    assert_eq!(
+        request.body,
+        json!({
+            "term": 1,
+            "value": 126000.0,
+            "updated_at": "2026-10-23T12:00:00Z"
+        })
+    );
+
+    let terminate = TerminateContractBody::new()
+        .reason("Supplier replaced")
+        .updated_at("2026-10-23T12:00:00Z");
+    let (client, server) = mock(contract);
+    client
+        .with_auth(Auth::Bearer("sentinel-workspace-token".into()))
+        .contracts("account")
+        .terminate("document", &terminate)
+        .await
+        .unwrap();
+    let request = server.join().unwrap();
+    assert_workspace(
+        &request,
+        "POST",
+        "/v1/accounts/account/documents/document/contract/terminate",
+    );
+    assert_eq!(
+        request.body,
+        json!({
+            "reason": "Supplier replaced",
+            "updated_at": "2026-10-23T12:00:00Z"
+        })
+    );
+
+    let client = Client::builder().build().unwrap();
+    assert!(matches!(
+        client
+            .contracts("account")
+            .renew("document", &RenewContractBody::from_term(0))
             .await,
         Err(Error::Validation(_))
     ));

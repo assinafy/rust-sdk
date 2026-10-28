@@ -48,6 +48,17 @@ pub struct Document {
     /// Signing URL for the document (when applicable).
     #[serde(default)]
     pub signing_url: Option<String>,
+    /// Code printed on the certificate page and accepted by the public
+    /// verification endpoint.
+    #[serde(default)]
+    pub verification_code: Option<String>,
+    /// Public verification page for the certificated document.
+    #[serde(default)]
+    pub verification_url: Option<String>,
+    /// Whether contract terms exist for this document or its contract family.
+    /// `None` means the endpoint did not determine it.
+    #[serde(default)]
+    pub has_contract: Option<bool>,
     /// Decline reason supplied by the signer or user, if any.
     #[serde(default)]
     pub decline_reason: Option<String>,
@@ -80,6 +91,9 @@ impl fmt::Debug for Document {
             .field("current_signer", &self.current_signer)
             .field("is_closed", &self.is_closed)
             .field("signing_url", &"**redacted**")
+            .field("verification_code", &self.verification_code)
+            .field("verification_url", &self.verification_url)
+            .field("has_contract", &self.has_contract)
             .field("decline_reason", &self.decline_reason)
             .field("declined_by", &self.declined_by)
             .field("tags", &self.tags)
@@ -360,6 +374,16 @@ pub struct PublicDocument {
     /// Signing URL, when available.
     #[serde(default)]
     pub signing_url: Option<String>,
+    /// Code printed on the certificate page, when certificated.
+    #[serde(default)]
+    pub verification_code: Option<String>,
+    /// Public verification page, when certificated.
+    #[serde(default)]
+    pub verification_url: Option<String>,
+    /// Whether contract terms exist for this document or its contract family,
+    /// when the endpoint determines it.
+    #[serde(default)]
+    pub has_contract: Option<bool>,
     /// Decline reason, when the document was declined.
     #[serde(default)]
     pub decline_reason: Option<String>,
@@ -400,6 +424,9 @@ impl fmt::Debug for PublicDocument {
             .field("assignment", &self.assignment)
             .field("is_closed", &self.is_closed)
             .field("signing_url", &"**redacted**")
+            .field("verification_code", &self.verification_code)
+            .field("verification_url", &self.verification_url)
+            .field("has_contract", &self.has_contract)
             .field("decline_reason", &self.decline_reason)
             .field("declined_by", &self.declined_by)
             .field("tags", &self.tags)

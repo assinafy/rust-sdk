@@ -62,6 +62,17 @@ pub struct UpdateNotificationPreferencesBody {
         skip_serializing_if = "Option::is_none"
     )]
     signer_whatsapp_failed: Option<bool>,
+    #[serde(
+        rename = "ContractRenewalNotice",
+        skip_serializing_if = "Option::is_none"
+    )]
+    contract_renewal_notice: Option<bool>,
+    #[serde(rename = "ContractExpiring", skip_serializing_if = "Option::is_none")]
+    contract_expiring: Option<bool>,
+    #[serde(rename = "ContractExpired", skip_serializing_if = "Option::is_none")]
+    contract_expired: Option<bool>,
+    #[serde(rename = "ContractRenewed", skip_serializing_if = "Option::is_none")]
+    contract_renewed: Option<bool>,
 }
 
 impl UpdateNotificationPreferencesBody {
@@ -125,6 +136,30 @@ impl UpdateNotificationPreferencesBody {
         self
     }
 
+    /// Enable or disable the contract-renewal-notice e-mail.
+    pub fn contract_renewal_notice(mut self, enabled: bool) -> Self {
+        self.contract_renewal_notice = Some(enabled);
+        self
+    }
+
+    /// Enable or disable the contract-expiring e-mail.
+    pub fn contract_expiring(mut self, enabled: bool) -> Self {
+        self.contract_expiring = Some(enabled);
+        self
+    }
+
+    /// Enable or disable the contract-expired e-mail.
+    pub fn contract_expired(mut self, enabled: bool) -> Self {
+        self.contract_expired = Some(enabled);
+        self
+    }
+
+    /// Enable or disable the contract-renewed e-mail.
+    pub fn contract_renewed(mut self, enabled: bool) -> Self {
+        self.contract_renewed = Some(enabled);
+        self
+    }
+
     /// Whether this update contains no preferences.
     pub fn is_empty(&self) -> bool {
         self.document_completed.is_none()
@@ -136,6 +171,10 @@ impl UpdateNotificationPreferencesBody {
             && self.document_processing_failed.is_none()
             && self.template_processing_failed.is_none()
             && self.signer_whatsapp_failed.is_none()
+            && self.contract_renewal_notice.is_none()
+            && self.contract_expiring.is_none()
+            && self.contract_expired.is_none()
+            && self.contract_renewed.is_none()
     }
 }
 
@@ -341,7 +380,7 @@ impl<'a> UsersApi<'a> {
         self.http.send_envelope(req).await
     }
 
-    /// Retrieve all nine owner-facing document e-mail preferences.
+    /// Retrieve all thirteen owner-facing document and contract e-mail preferences.
     ///
     /// `GET /users/self/notification-preferences`. All keys are always
     /// returned; each defaults to `true` until changed. This endpoint is
@@ -363,7 +402,11 @@ impl<'a> UsersApi<'a> {
     ///   "DocumentExpirationReset": true,
     ///   "DocumentProcessingFailed": true,
     ///   "TemplateProcessingFailed": true,
-    ///   "SignerWhatsappFailed": true
+    ///   "SignerWhatsappFailed": true,
+    ///   "ContractRenewalNotice": true,
+    ///   "ContractExpiring": true,
+    ///   "ContractExpired": true,
+    ///   "ContractRenewed": true
     /// } }
     /// ```
     pub async fn notification_preferences(&self) -> Result<NotificationPreferences> {
@@ -373,7 +416,7 @@ impl<'a> UsersApi<'a> {
         self.http.send_envelope(req).await
     }
 
-    /// Update one or more owner-facing document e-mail preferences.
+    /// Update one or more owner-facing document or contract e-mail preferences.
     ///
     /// `PUT /users/self/notification-preferences`. Omitted keys keep their
     /// current values. An empty update is rejected locally as
@@ -399,7 +442,11 @@ impl<'a> UsersApi<'a> {
     ///   "DocumentExpirationReset": true,
     ///   "DocumentProcessingFailed": true,
     ///   "TemplateProcessingFailed": true,
-    ///   "SignerWhatsappFailed": true
+    ///   "SignerWhatsappFailed": true,
+    ///   "ContractRenewalNotice": true,
+    ///   "ContractExpiring": true,
+    ///   "ContractExpired": true,
+    ///   "ContractRenewed": true
     /// } }
     /// ```
     pub async fn update_notification_preferences(
@@ -621,19 +668,21 @@ mod tests {
 
         let body = UpdateNotificationPreferencesBody::new()
             .document_completed(false)
-            .signer_whatsapp_failed(true);
+            .signer_whatsapp_failed(true)
+            .contract_expiring(false);
         assert!(!body.is_empty());
         assert_eq!(
             serde_json::to_value(body).unwrap(),
             serde_json::json!({
                 "DocumentCompleted": false,
-                "SignerWhatsappFailed": true
+                "SignerWhatsappFailed": true,
+                "ContractExpiring": false
             })
         );
     }
 
     #[test]
-    fn notification_preferences_decode_all_nine_api_keys() {
+    fn notification_preferences_decode_all_thirteen_api_keys() {
         let preferences: NotificationPreferences = serde_json::from_value(serde_json::json!({
             "DocumentCompleted": false,
             "SignerDeclined": true,
@@ -643,7 +692,11 @@ mod tests {
             "DocumentExpirationReset": true,
             "DocumentProcessingFailed": false,
             "TemplateProcessingFailed": true,
-            "SignerWhatsappFailed": false
+            "SignerWhatsappFailed": false,
+            "ContractRenewalNotice": true,
+            "ContractExpiring": false,
+            "ContractExpired": true,
+            "ContractRenewed": false
         }))
         .unwrap();
 
@@ -653,5 +706,9 @@ mod tests {
         assert!(preferences.document_expiration_reset);
         assert!(preferences.template_processing_failed);
         assert!(!preferences.signer_whatsapp_failed);
+        assert!(preferences.contract_renewal_notice);
+        assert!(!preferences.contract_expiring);
+        assert!(preferences.contract_expired);
+        assert!(!preferences.contract_renewed);
     }
 }

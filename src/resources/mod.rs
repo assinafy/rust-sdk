@@ -18,6 +18,7 @@ mod activities;
 mod api_keys;
 mod assignments;
 mod auth;
+mod contracts;
 mod documents;
 mod fields;
 mod oauth;
@@ -43,6 +44,10 @@ pub use assignments::{
 pub use auth::{
     AuthApi, ChangePasswordBody, EmailResult, LinkSocialLoginBody, LoginBody,
     RequestPasswordResetBody, ResetPasswordBody, SocialLoginBody, VerifyMfaBody,
+};
+pub use contracts::{
+    ContractsApi, ListContractsRequest, RenewContractBody, TerminateContractBody,
+    UpdateContractBody,
 };
 pub use documents::{
     DocumentsApi, ListDocumentsRequest, SearchDocumentsRequest, UploadDocumentRequest,

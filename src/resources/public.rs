@@ -16,14 +16,14 @@ use crate::models::PublicDocument;
 /// # Request payload
 ///
 /// ```json
-/// { "channel": "email", "recipient": "signer@example.com" }
+/// { "channel": "email", "recipient": "user@example.invalid" }
 /// ```
 ///
 /// ```
 /// # use assinafy::resources::SendTokenBody;
 /// assert_eq!(
-///     serde_json::to_value(SendTokenBody::email("signer@example.com")).unwrap(),
-///     serde_json::json!({ "recipient": "signer@example.com", "channel": "email" })
+///     serde_json::to_value(SendTokenBody::email("user@example.invalid")).unwrap(),
+///     serde_json::json!({ "recipient": "user@example.invalid", "channel": "email" })
 /// );
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,7 +95,7 @@ impl SendTokenBody {
 ///     "created_by": "Maria Silva"
 ///   },
 ///   "channel": "email",
-///   "recipient": "signer@example.com"
+///   "recipient": "user@example.invalid"
 /// }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -148,6 +148,8 @@ impl<'a> PublicApi<'a> {
     ///     "artifacts": { "original": "https://files.example.invalid/original.pdf" },
     ///     "is_closed": false,
     ///     "signing_url": "https://sign.example.invalid/103b03b95d7951922360a1626727",
+    ///     "verification_code": null,
+    ///     "verification_url": null,
     ///     "decline_reason": null,
     ///     "declined_by": null,
     ///     "tags": [],
@@ -185,7 +187,7 @@ impl<'a> PublicApi<'a> {
     /// # Request payload
     ///
     /// ```json
-    /// { "channel": "email", "recipient": "signer@example.com" }
+    /// { "channel": "email", "recipient": "user@example.invalid" }
     /// ```
     ///
     /// # Response payload
@@ -197,7 +199,7 @@ impl<'a> PublicApi<'a> {
     ///   "data": {
     ///     "document": { "resource": "document", "id": "103b03b95d7951922360a1626727", "name": "contract.pdf", "page_count": 2, "created_by": "Maria Silva" },
     ///     "channel": "email",
-    ///     "recipient": "signer@example.com"
+    ///     "recipient": "user@example.invalid"
     ///   }
     /// }
     /// ```
@@ -219,7 +221,7 @@ impl<'a> PublicApi<'a> {
     /// # Request payload
     ///
     /// ```json
-    /// { "channel": "email", "recipient": "signer@example.com" }
+    /// { "channel": "email", "recipient": "user@example.invalid" }
     /// ```
     ///
     /// # Response payload
@@ -231,7 +233,7 @@ impl<'a> PublicApi<'a> {
     ///   "data": {
     ///     "document": { "resource": "document", "id": "103b03b95d7951922360a1626727", "name": "contract.pdf", "page_count": 2, "created_by": "Maria Silva" },
     ///     "channel": "email",
-    ///     "recipient": "signer@example.com"
+    ///     "recipient": "user@example.invalid"
     ///   }
     /// }
     /// ```
@@ -255,10 +257,10 @@ mod tests {
 
     #[test]
     fn send_token_body_is_the_email_channel_and_a_recipient() {
-        let body = SendTokenBody::email("signer@example.com");
+        let body = SendTokenBody::email("user@example.invalid");
         assert_eq!(
             serde_json::to_value(&body).unwrap(),
-            serde_json::json!({ "channel": "email", "recipient": "signer@example.com" })
+            serde_json::json!({ "channel": "email", "recipient": "user@example.invalid" })
         );
         assert!(body.validate().is_ok());
     }
@@ -268,7 +270,7 @@ mod tests {
     fn send_token_refuses_other_channels_and_empty_recipients() {
         for body in [
             SendTokenBody::whatsapp("+5511999999999"),
-            SendTokenBody::new("signer@example.com", "sms"),
+            SendTokenBody::new("user@example.invalid", "sms"),
             SendTokenBody::email(" "),
         ] {
             assert!(matches!(body.validate(), Err(Error::Validation(_))));
@@ -280,11 +282,11 @@ mod tests {
         let result: SendTokenResult = serde_json::from_value(serde_json::json!({
             "document": { "resource": "document", "id": "doc-1", "name": "contract.pdf", "page_count": 2, "created_by": "Maria Silva" },
             "channel": "email",
-            "recipient": "signer@example.com"
+            "recipient": "user@example.invalid"
         }))
         .unwrap();
         assert_eq!(result.channel.as_deref(), Some("email"));
-        assert_eq!(result.recipient.as_deref(), Some("signer@example.com"));
+        assert_eq!(result.recipient.as_deref(), Some("user@example.invalid"));
         assert_eq!(result.document.unwrap().id, "doc-1");
     }
 }

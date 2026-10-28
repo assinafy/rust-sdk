@@ -5,7 +5,7 @@
 //!
 //! The SDK is organised around a single [`Client`] that exposes a resource
 //! module per API surface — accounts, signers, documents, assignments,
-//! templates, tags, fields, webhooks, activities, API keys, OAuth, and
+//! templates, contracts, tags, fields, webhooks, activities, API keys, OAuth, and
 //! authentication helpers. Every call is `async`, returns a strongly-typed [`Result`], and
 //! uses the same response envelope the API itself uses
 //! (`{ status, message, data }`).
