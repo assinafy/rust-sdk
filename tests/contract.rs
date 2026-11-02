@@ -10,8 +10,8 @@ use assinafy::models::{
 };
 use assinafy::resources::{
     CreateAssignmentBody, CreateAssignmentSigner, CreateDocumentFromTemplateBody,
-    IdentityReviewBody, IdentityReviewDecision, RenewContractBody, TemplateDocumentSigner,
-    TerminateContractBody, UpdateContractBody, WebhookEndpointBody,
+    IdentityReviewBody, IdentityReviewDecision, RenewContractBody, SearchDocumentsRequest,
+    TemplateDocumentSigner, TerminateContractBody, UpdateContractBody, WebhookEndpointBody,
 };
 use assinafy::{Auth, BaseUrl, Client, Error};
 use serde_json::{Value, json};
@@ -92,6 +92,53 @@ fn assert_workspace(request: &Request, method: &str, path: &str) {
     );
     assert!(!request.headers.contains_key("x-api-key"));
     assert!(request.url.query().is_none());
+}
+
+#[tokio::test]
+async fn assignment_and_document_search_send_documented_sort_queries() {
+    let (client, server) = mock(json!([]));
+    client
+        .assignments()
+        .list("account")
+        .sort("-created_at")
+        .page(2)
+        .per_page(50)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        server.join().unwrap().url.query_pairs().collect::<Vec<_>>(),
+        [
+            ("accountId".into(), "account".into()),
+            ("sort".into(), "-created_at".into()),
+            ("page".into(), "2".into()),
+            ("per-page".into(), "50".into()),
+        ]
+    );
+
+    let (client, server) = mock(json!([]));
+    client
+        .documents()
+        .search(
+            "account",
+            SearchDocumentsRequest::new("contract")
+                .status("metadata_ready")
+                .sort("-updated_at")
+                .page(2)
+                .per_page(50),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        server.join().unwrap().url.query_pairs().collect::<Vec<_>>(),
+        [
+            ("search".into(), "contract".into()),
+            ("status".into(), "metadata_ready".into()),
+            ("sort".into(), "-updated_at".into()),
+            ("page".into(), "2".into()),
+            ("per-page".into(), "50".into()),
+        ]
+    );
 }
 
 #[tokio::test]

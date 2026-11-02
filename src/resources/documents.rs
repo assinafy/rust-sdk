@@ -103,6 +103,7 @@ impl ListDocumentsRequest {
 pub struct SearchDocumentsRequest {
     search: String,
     status: Option<String>,
+    sort: Option<String>,
     page: Option<u32>,
     per_page: Option<u32>,
 }
@@ -113,6 +114,7 @@ impl SearchDocumentsRequest {
         Self {
             search: term.into(),
             status: None,
+            sort: None,
             page: None,
             per_page: None,
         }
@@ -121,6 +123,12 @@ impl SearchDocumentsRequest {
     /// Filter by status code.
     pub fn status<S: Into<String>>(mut self, status: S) -> Self {
         self.status = Some(status.into());
+        self
+    }
+
+    /// Sort by `name` or `updated_at`; prefix with `-` for descending order.
+    pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
+        self.sort = Some(sort.into());
         self
     }
 
@@ -140,6 +148,9 @@ impl SearchDocumentsRequest {
         let mut q = vec![("search", self.search)];
         if let Some(v) = self.status {
             q.push(("status", v));
+        }
+        if let Some(v) = self.sort {
+            q.push(("sort", v));
         }
         if let Some(v) = self.page {
             q.push(("page", v.to_string()));
@@ -333,7 +344,7 @@ impl<'a> DocumentsApi<'a> {
     /// parameters are URL-encoded; only configured filters are sent.
     ///
     /// ```json
-    /// {"search": "contract", "status": "metadata_ready", "page": 1, "per-page": 20}
+    /// {"search": "contract", "status": "metadata_ready", "sort": "-updated_at", "page": 1, "per-page": 20}
     /// ```
     ///
     /// # Response payload

@@ -4,6 +4,13 @@ All notable changes to the `assinafy` crate are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [3.9.0] - 2026-11-02
+
+### Added
+
+- Assignment listing supports the API's `sort` query parameter.
+- Lightweight document search supports the API's `sort` query parameter.
+
 ## [3.8.0] - 2026-10-28
 
 ### Added

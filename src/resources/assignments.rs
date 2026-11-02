@@ -411,11 +411,19 @@ impl<'a> From<&'a EstimateAssignmentCostBody> for EstimateAssignmentPayload<'a> 
 pub struct ListAssignmentsRequest<'a> {
     http: &'a HttpClient,
     account_id: Option<String>,
+    sort: Option<String>,
     page: Option<u32>,
     per_page: Option<u32>,
 }
 
 impl<'a> ListAssignmentsRequest<'a> {
+    /// Sort by `created_at` (the default), `expires_at`, or `id`; prefix with
+    /// `-` for descending order.
+    pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
+        self.sort = Some(sort.into());
+        self
+    }
+
     /// 1-based page number.
     pub fn page(mut self, page: u32) -> Self {
         self.page = Some(page);
@@ -430,7 +438,7 @@ impl<'a> ListAssignmentsRequest<'a> {
 
     /// Execute the request.
     ///
-    /// `GET /assignments` with optional `page` and `per-page` query
+    /// `GET /assignments` with optional `sort`, `page`, and `per-page` query
     /// parameters. The SDK also sends the legacy `accountId`
     /// parameter when the request came from [`AssignmentsApi::list`].
     ///
@@ -440,7 +448,7 @@ impl<'a> ListAssignmentsRequest<'a> {
     /// parameters are URL-encoded; only configured filters are sent.
     ///
     /// ```json
-    /// { "accountId": "acc_1234567890abcdef12345678", "page": 1, "per-page": 20 }
+    /// { "accountId": "acc_1234567890abcdef12345678", "sort": "-created_at", "page": 1, "per-page": 20 }
     /// ```
     ///
     /// # Response payload
@@ -461,9 +469,12 @@ impl<'a> ListAssignmentsRequest<'a> {
     /// ]}
     /// ```
     pub async fn send(self) -> Result<Page<Assignment>> {
-        let mut query: Vec<(&str, String)> = Vec::with_capacity(3);
+        let mut query: Vec<(&str, String)> = Vec::with_capacity(4);
         if let Some(account_id) = self.account_id {
             query.push(("accountId", account_id));
+        }
+        if let Some(v) = self.sort {
+            query.push(("sort", v));
         }
         if let Some(v) = self.page {
             query.push(("page", v.to_string()));
@@ -511,6 +522,7 @@ impl<'a> AssignmentsApi<'a> {
         ListAssignmentsRequest {
             http: self.http,
             account_id: Some(account_id.into()),
+            sort: None,
             page: None,
             per_page: None,
         }
@@ -518,7 +530,7 @@ impl<'a> AssignmentsApi<'a> {
 
     /// List assignments for the authenticated user's current account.
     ///
-    /// `GET /assignments`, with only the documented pagination parameters.
+    /// `GET /assignments`, with the documented sort and pagination parameters.
     /// [`ListAssignmentsRequest::send`] documents the response payload and
     /// pagination headers.
     ///
@@ -533,6 +545,7 @@ impl<'a> AssignmentsApi<'a> {
         ListAssignmentsRequest {
             http: self.http,
             account_id: None,
+            sort: None,
             page: None,
             per_page: None,
         }
