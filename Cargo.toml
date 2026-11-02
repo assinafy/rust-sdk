@@ -30,7 +30,7 @@ sha2 = "0.10"
 # standard base64 for the `whsec_` key and the `v1,` signatures. `base64` also
 # encodes the PKCE verifier and challenge (unpadded base64url).
 base64 = "0.23"
-hmac = "0.12"
+hmac = "0.13"
 # `form` encodes the OAuth token and revocation bodies, which RFC 6749 §3.2 and
 # RFC 7009 §2.1 define as application/x-www-form-urlencoded.
 # `default-features = false` only to opt out of reqwest's `default-tls`, which
