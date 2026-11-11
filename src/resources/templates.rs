@@ -864,16 +864,8 @@ impl<'a> TemplatesApi<'a> {
         template_id: S,
         body: &CreateDocumentFromTemplateBody,
     ) -> Result<Document> {
-        validate_create_document(body)?;
-        let path = self.http.path(&[
-            "accounts",
-            self.account_id.as_str(),
-            "templates",
-            template_id.as_ref(),
-            "documents",
-        ])?;
-        let req = self.http.request(Method::POST, &path)?.json(body);
-        self.http.send_data(req).await
+        self.create_document_with_options(template_id, body, &TemplateDocumentOptions::default())
+            .await
     }
 
     /// Create a template document with spending, retry and embedded-signing controls.

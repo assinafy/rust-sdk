@@ -631,12 +631,8 @@ impl<'a> AssignmentsApi<'a> {
         document_id: S,
         body: &CreateAssignmentBody,
     ) -> Result<Assignment> {
-        validate_create_assignment(body)?;
-        let path = self
-            .http
-            .path(&["documents", document_id.as_ref(), "assignments"])?;
-        let req = self.http.request(Method::POST, &path)?.json(body);
-        self.http.send_data(req).await
+        self.create_with_options(document_id, body, &AssignmentCreateOptions::default())
+            .await
     }
 
     /// Create an assignment with spending and embedded-signing controls.

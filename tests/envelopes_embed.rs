@@ -1,8 +1,8 @@
+mod common;
+
+use common::{Request, validation_client};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::thread::JoinHandle;
 
 use assinafy::models::{
     ArtifactName, AssignmentMethod, DocumentEnvelope, EmbedSessionExchange, VerificationMethod,
@@ -14,20 +14,11 @@ use assinafy::resources::{
 use assinafy::{Auth, BaseUrl, Client, Error};
 use serde_json::{Value, json};
 
-struct Request {
-    method: String,
-    url: url::Url,
-    headers: HashMap<String, String>,
-    body: Value,
-}
-
 fn mock(data: Value) -> (Client, JoinHandle<Request>) {
-    mock_response(
-        "200 OK",
-        "",
-        json!({"status":200,"message":"","data":data})
-            .to_string()
-            .into_bytes(),
+    let (client, server) = common::mock(data);
+    (
+        client.with_auth(Auth::ApiKey("sentinel-workspace-key".into())),
+        server,
     )
 }
 
@@ -36,56 +27,11 @@ fn mock_response(
     extra_headers: &str,
     response: Vec<u8>,
 ) -> (Client, JoinHandle<Request>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let extra_headers = extra_headers.to_owned();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut reader = BufReader::new(&stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let mut parts = line.split_whitespace();
-        let method = parts.next().unwrap().to_owned();
-        let url = url::Url::parse(&format!("http://{address}{}", parts.next().unwrap())).unwrap();
-        let mut headers = HashMap::new();
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            if line == "\r\n" {
-                break;
-            }
-            let (name, value) = line.split_once(':').unwrap();
-            headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
-        }
-        let len = headers
-            .get("content-length")
-            .map_or(0, |s| s.parse().unwrap());
-        let mut bytes = vec![0; len];
-        reader.read_exact(&mut bytes).unwrap();
-        let body = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).unwrap()
-        };
-        write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n", response.len()).unwrap();
-        stream.write_all(&response).unwrap();
-        Request {
-            method,
-            url,
-            headers,
-            body,
-        }
-    });
-    let client = Client::builder()
-        .base_url(BaseUrl::custom(format!("http://{address}/v1")).unwrap())
-        .api_key("sentinel-workspace-key")
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap();
-    (client, server)
+    let (client, server) = common::mock_http(status, "application/json", extra_headers, response);
+    (
+        client.with_auth(Auth::ApiKey("sentinel-workspace-key".into())),
+        server,
+    )
 }
 
 fn envelope() -> Value {
@@ -516,7 +462,7 @@ async fn exchange_ignores_custom_transport_credentials_and_redirect_policy() {
 
 #[tokio::test]
 async fn envelope_validation_rejects_invalid_work_before_network() {
-    let client = Client::from_api_key("example-redacted-key").unwrap();
+    let client = validation_client().with_auth(Auth::ApiKey("example-redacted-key".into()));
     for ceiling in [-1.0, f64::NAN, f64::INFINITY] {
         assert!(matches!(
             client
@@ -683,7 +629,7 @@ async fn envelope_signer_notification_pairings_match_assignment_rules() {
             json!({"id":"signer","verification_method":verification,"notification_methods":[notification]})
         );
     }
-    let client = Client::from_api_key("example-redacted-key").unwrap();
+    let client = validation_client().with_auth(Auth::ApiKey("example-redacted-key".into()));
     for notifications in [vec![], vec![Email, Whatsapp], vec![Whatsapp]] {
         let mut body = create_body();
         body.signers[0] = EnvelopeSignerConfig::new("signer")

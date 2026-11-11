@@ -1,83 +1,14 @@
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+mod common;
+
+use common::{mock, validation_client};
 
 use assinafy::models::{AssignmentMethod, Document, DocumentVerification, SigningUrl};
 use assinafy::resources::{
     AssignmentCreateOptions, CreateAssignmentBody, CreateDocumentFromTemplateBody,
     ListDocumentsRequest, SearchDocumentsRequest, TemplateDocumentOptions, TemplateDocumentSigner,
 };
-use assinafy::{Auth, BaseUrl, Client, Error};
-use serde_json::{Value, json};
-
-struct Request {
-    method: String,
-    url: url::Url,
-    headers: HashMap<String, String>,
-    body: Value,
-}
-
-fn mock(data: Value) -> (Client, JoinHandle<Request>) {
-    mock_response(
-        "application/json",
-        json!({"status":200, "message":"", "data":data})
-            .to_string()
-            .into_bytes(),
-    )
-}
-
-fn mock_response(content_type: &'static str, response: Vec<u8>) -> (Client, JoinHandle<Request>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut reader = BufReader::new(&stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let parts: Vec<_> = line.split_whitespace().collect();
-        let method = parts[0].to_owned();
-        let url = url::Url::parse(&format!("http://{address}{}", parts[1])).unwrap();
-        let mut headers = HashMap::new();
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            if line == "\r\n" {
-                break;
-            }
-            let (name, value) = line.split_once(':').unwrap();
-            headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
-        }
-        let len = headers
-            .get("content-length")
-            .map_or(0, |s| s.parse().unwrap());
-        let mut bytes = vec![0; len];
-        reader.read_exact(&mut bytes).unwrap();
-        let body = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).unwrap()
-        };
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).unwrap();
-        stream.write_all(&response).unwrap();
-        Request {
-            method,
-            url,
-            headers,
-            body,
-        }
-    });
-    let client = Client::builder()
-        .base_url(BaseUrl::custom(format!("http://{address}/v1")).unwrap())
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap();
-    (client, server)
-}
+use assinafy::{Auth, Error};
+use serde_json::json;
 
 #[test]
 fn closed_signer_and_embedded_url_responses_decode() {
@@ -222,11 +153,7 @@ async fn template_inline_signers_idempotency_and_ceiling_reach_the_wire() {
 
 #[tokio::test]
 async fn creation_controls_reject_invalid_ceilings_and_unknown_signers_before_sending() {
-    let client = Client::builder()
-        .auth(Auth::ApiKey("example-redacted-key".into()))
-        .base_url(BaseUrl::custom("http://127.0.0.1:1/v1").unwrap())
-        .build()
-        .unwrap();
+    let client = validation_client().with_auth(Auth::ApiKey("example-redacted-key".into()));
     let assignment = CreateAssignmentBody::new(AssignmentMethod::Virtual, ["signer"]);
     let template = CreateDocumentFromTemplateBody::default()
         .signers([TemplateDocumentSigner::existing("role", "signer")]);
@@ -283,4 +210,52 @@ async fn creation_controls_reject_invalid_ceilings_and_unknown_signers_before_se
             .await,
         Err(Error::Validation(_))
     ));
+}
+
+#[tokio::test]
+async fn default_creation_options_preserve_existing_requests() {
+    let assignment = CreateAssignmentBody::new(AssignmentMethod::Virtual, ["signer"]);
+    let template = CreateDocumentFromTemplateBody::default()
+        .signers([TemplateDocumentSigner::existing("role", "signer")]);
+    for with_options in [false, true] {
+        let (client, server) = mock(json!({"id":"assignment"}));
+        let api = client.assignments();
+        if with_options {
+            api.create_with_options("document", &assignment, &AssignmentCreateOptions::default())
+                .await
+                .unwrap();
+        } else {
+            api.create("document", &assignment).await.unwrap();
+        }
+        let request = server.join().unwrap();
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.url.path(), "/v1/documents/document/assignments");
+        assert!(request.url.query().is_none());
+        assert_eq!(request.body, serde_json::to_value(&assignment).unwrap());
+        assert!(!request.headers.contains_key("idempotency-key"));
+
+        let (client, server) =
+            mock(json!({"id":"document","name":"Contract.pdf","status":"uploaded"}));
+        let api = client.templates("account");
+        if with_options {
+            api.create_document_with_options(
+                "template",
+                &template,
+                &TemplateDocumentOptions::default(),
+            )
+            .await
+            .unwrap();
+        } else {
+            api.create_document("template", &template).await.unwrap();
+        }
+        let request = server.join().unwrap();
+        assert_eq!(request.method, "POST");
+        assert_eq!(
+            request.url.path(),
+            "/v1/accounts/account/templates/template/documents"
+        );
+        assert!(request.url.query().is_none());
+        assert_eq!(request.body, serde_json::to_value(&template).unwrap());
+        assert!(!request.headers.contains_key("idempotency-key"));
+    }
 }

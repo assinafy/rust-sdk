@@ -55,6 +55,7 @@ async fn connection_exchanges_refreshes_and_revokes_tokens() -> Result<()> {
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream.set_nonblocking(false)?;
                     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
                     let mut bytes = [0; 8192];
                     let mut request = Vec::new();

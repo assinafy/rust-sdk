@@ -4,6 +4,13 @@ All notable changes to the `assinafy` crate are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [3.10.1] - 2026-11-11
+
+### Changed
+
+- Assignment creation, template creation and signer document convenience methods
+  share their request implementations while preserving existing payloads.
+
 ## [3.10.0] - 2026-11-11
 
 ### Added

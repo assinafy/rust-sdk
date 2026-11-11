@@ -1,80 +1,16 @@
+mod common;
+
 use assinafy::resources::DeclineMultipleDocumentsBody;
 use assinafy::resources::UpdatePushPreferencesBody;
 use assinafy::resources::{UpdateNotificationPolicyBody, UpdateNotificationPolicyEvents};
 use assinafy::{Auth, BaseUrl, Client, Error};
-use serde_json::{Value, json};
+use common::{Request, mock, mock_response, validation_client};
+use serde_json::json;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::Duration;
-
-struct Request {
-    method: String,
-    url: url::Url,
-    headers: HashMap<String, String>,
-    body: Value,
-}
-
-fn mock(data: Value) -> (Client, JoinHandle<Request>) {
-    mock_response(
-        "application/json",
-        json!({"status":200, "message":"", "data":data})
-            .to_string()
-            .into_bytes(),
-    )
-}
-
-fn mock_response(content_type: &'static str, response: Vec<u8>) -> (Client, JoinHandle<Request>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut reader = BufReader::new(&stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let parts: Vec<_> = line.split_whitespace().collect();
-        let method = parts[0].to_owned();
-        let url = url::Url::parse(&format!("http://{address}{}", parts[1])).unwrap();
-        let mut headers = HashMap::new();
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            if line == "\r\n" {
-                break;
-            }
-            let (name, value) = line.split_once(':').unwrap();
-            headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
-        }
-        let len = headers
-            .get("content-length")
-            .map_or(0, |s| s.parse().unwrap());
-        let mut bytes = vec![0; len];
-        reader.read_exact(&mut bytes).unwrap();
-        let body = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).unwrap()
-        };
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).unwrap();
-        stream.write_all(&response).unwrap();
-        Request {
-            method,
-            url,
-            headers,
-            body,
-        }
-    });
-    let client = Client::builder()
-        .base_url(BaseUrl::custom(format!("http://{address}/v1")).unwrap())
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap();
-    (client, server)
-}
 
 fn assert_request(r: &Request, method: &str, path: &str, signer: bool) {
     assert_eq!(r.method, method);
@@ -209,7 +145,7 @@ async fn preferences_merge_only_supplied_fields_and_reject_empty_updates() {
         r.body,
         json!({"events":{"SignerViewed":false},"owners_receive_all":true})
     );
-    let client = Client::builder().build().unwrap();
+    let client = validation_client();
     assert!(matches!(
         client
             .users()
@@ -503,4 +439,37 @@ fn webhook_duration_decodes_new_and_legacy_dispatches() {
     let legacy: assinafy::models::WebhookDispatch =
         serde_json::from_value(json!({"id":"dispatch", "event":"webhook_test"})).unwrap();
     assert_eq!(legacy.duration_ms, None);
+}
+
+#[tokio::test]
+async fn signing_convenience_methods_preserve_absent_and_false_terms_queries() {
+    for accepted in [None, Some(false), Some(true)] {
+        for with_options in [false, true] {
+            let (client, server) =
+                mock(json!({"id":"doc","name":"example.pdf","status":"pending_signature"}));
+            let client = client.with_auth(Auth::AccessCode("sentinel-code".into()));
+            let api = client.signer_self();
+            let document = if with_options {
+                api.signable_document_with_options(accepted, false, None)
+                    .await
+            } else if let Some(accepted) = accepted {
+                api.signable_document_with_accepted_terms(accepted).await
+            } else {
+                api.signable_document().await
+            }
+            .unwrap();
+            assert_eq!(document.id, "doc");
+            let request = server.join().unwrap();
+            assert_request(&request, "GET", "/v1/sign", true);
+            let mut expected = vec![("signer-access-code".to_owned(), "sentinel-code".to_owned())];
+            if let Some(accepted) = accepted {
+                expected.push(("has_accepted_terms".to_owned(), accepted.to_string()));
+            }
+            assert_eq!(
+                request.url.query_pairs().into_owned().collect::<Vec<_>>(),
+                expected
+            );
+            assert!(request.body.is_null());
+        }
+    }
 }

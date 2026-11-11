@@ -604,8 +604,7 @@ impl<'a> SignerSelfApi<'a> {
     /// }
     /// ```
     pub async fn signable_document(&self) -> Result<Document> {
-        let req = self.http.request_signer(Method::GET, "sign")?;
-        self.http.send_data(req).await
+        self.signable_document_with_options(None, false, None).await
     }
 
     /// Retrieve the signable document and record the terms-acceptance flag.
@@ -639,11 +638,8 @@ impl<'a> SignerSelfApi<'a> {
         &self,
         has_accepted_terms: bool,
     ) -> Result<Document> {
-        let req = self
-            .http
-            .request_signer(Method::GET, "sign")?
-            .query(&[("has_accepted_terms", has_accepted_terms)]);
-        self.http.send_data(req).await
+        self.signable_document_with_options(Some(has_accepted_terms), false, None)
+            .await
     }
 
     /// Sign one assignment with field values.

@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+mod common;
+
+use common::{Request, mock, mock_response, validation_client};
 
 use assinafy::models::{
     AssignmentMethod, ContractStatus, DocumentContractDetails, IdentityVerificationStatus,
@@ -13,75 +11,8 @@ use assinafy::resources::{
     IdentityReviewBody, IdentityReviewDecision, RenewContractBody, SearchDocumentsRequest,
     TemplateDocumentSigner, TerminateContractBody, UpdateContractBody, WebhookEndpointBody,
 };
-use assinafy::{Auth, BaseUrl, Client, Error};
+use assinafy::{Auth, Error};
 use serde_json::{Value, json};
-
-struct Request {
-    method: String,
-    url: url::Url,
-    headers: HashMap<String, String>,
-    body: Value,
-}
-
-fn mock(data: Value) -> (Client, JoinHandle<Request>) {
-    mock_response(
-        "application/json",
-        json!({"status":200, "message":"", "data":data})
-            .to_string()
-            .into_bytes(),
-    )
-}
-
-fn mock_response(content_type: &'static str, response: Vec<u8>) -> (Client, JoinHandle<Request>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut reader = BufReader::new(&stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let parts: Vec<_> = line.split_whitespace().collect();
-        let method = parts[0].to_owned();
-        let url = url::Url::parse(&format!("http://{address}{}", parts[1])).unwrap();
-        let mut headers = HashMap::new();
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            if line == "\r\n" {
-                break;
-            }
-            let (name, value) = line.split_once(':').unwrap();
-            headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
-        }
-        let len = headers
-            .get("content-length")
-            .map_or(0, |s| s.parse().unwrap());
-        let mut bytes = vec![0; len];
-        reader.read_exact(&mut bytes).unwrap();
-        let body = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).unwrap()
-        };
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).unwrap();
-        stream.write_all(&response).unwrap();
-        Request {
-            method,
-            url,
-            headers,
-            body,
-        }
-    });
-    let client = Client::builder()
-        .base_url(BaseUrl::custom(format!("http://{address}/v1")).unwrap())
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap();
-    (client, server)
-}
 
 fn assert_workspace(request: &Request, method: &str, path: &str) {
     assert_eq!(request.method, method);
@@ -189,7 +120,7 @@ async fn signer_identity_status_preserves_states_and_redacts_capture_links() {
 
 #[tokio::test]
 async fn identity_start_requires_consent_and_only_a_signer_credential() {
-    let client = Client::from_api_key("sentinel-api-key").unwrap();
+    let client = validation_client().with_auth(Auth::ApiKey("sentinel-api-key".into()));
     assert!(matches!(
         client.signer_self().identity_verification().await,
         Err(Error::Config(_))
@@ -308,7 +239,7 @@ async fn identity_images_use_safe_paths_and_workspace_credentials() {
             ),
         );
     }
-    let client = Client::builder().build().unwrap();
+    let client = validation_client();
     for (d, a, s, name) in [
         ("../escape", "a", "s", "face"),
         ("d", "a?query", "s", "face"),
@@ -524,9 +455,7 @@ async fn webhook_url_lookup_and_delete_encode_the_exact_registered_url() {
         assert_eq!(request.body, Value::Null);
     }
     assert!(matches!(
-        Client::builder()
-            .build()
-            .unwrap()
+        validation_client()
             .webhooks("account")
             .delete_endpoint_by_url(" ")
             .await,
@@ -703,7 +632,7 @@ async fn contract_tracking_routes_match_the_published_wire_contract() {
         })
     );
 
-    let client = Client::builder().build().unwrap();
+    let client = validation_client();
     assert!(matches!(
         client
             .contracts("account")
