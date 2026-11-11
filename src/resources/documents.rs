@@ -19,6 +19,7 @@ pub struct ListDocumentsRequest {
     search: Option<String>,
     sort: Option<String>,
     status: Option<String>,
+    envelope_id: Option<String>,
     tags: Vec<String>,
     method: Option<String>,
 }
@@ -45,6 +46,12 @@ impl ListDocumentsRequest {
     /// Sort expression (e.g. `"-created_at"`).
     pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
         self.sort = Some(sort.into());
+        self
+    }
+
+    /// Restrict results to documents in an envelope.
+    pub fn envelope_id(mut self, id: impl Into<String>) -> Self {
+        self.envelope_id = Some(id.into());
         self
     }
 
@@ -84,6 +91,9 @@ impl ListDocumentsRequest {
         if let Some(v) = self.sort {
             q.push(("sort", v));
         }
+        if let Some(v) = self.envelope_id {
+            q.push(("envelope_id", v));
+        }
         if let Some(v) = self.status {
             q.push(("status", v));
         }
@@ -103,6 +113,7 @@ impl ListDocumentsRequest {
 pub struct SearchDocumentsRequest {
     search: String,
     status: Option<String>,
+    envelope_id: Option<String>,
     sort: Option<String>,
     page: Option<u32>,
     per_page: Option<u32>,
@@ -114,10 +125,17 @@ impl SearchDocumentsRequest {
         Self {
             search: term.into(),
             status: None,
+            envelope_id: None,
             sort: None,
             page: None,
             per_page: None,
         }
+    }
+
+    /// Restrict results to documents in an envelope.
+    pub fn envelope_id(mut self, id: impl Into<String>) -> Self {
+        self.envelope_id = Some(id.into());
+        self
     }
 
     /// Filter by status code.
@@ -146,6 +164,9 @@ impl SearchDocumentsRequest {
 
     fn into_query(self) -> Vec<(&'static str, String)> {
         let mut q = vec![("search", self.search)];
+        if let Some(v) = self.envelope_id {
+            q.push(("envelope_id", v));
+        }
         if let Some(v) = self.status {
             q.push(("status", v));
         }
@@ -400,10 +421,38 @@ impl<'a> DocumentsApi<'a> {
         self.http.send_envelope(req).await
     }
 
+    /// Retrieve a document with optional envelope expansions.
+    ///
+    /// `GET /documents/{document_id}?expand=envelope_id,envelope`.
+    ///
+    /// # Request payload
+    ///
+    /// No body. `expand` is a comma-separated list of `envelope_id` and `envelope`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"document","name":"Contract.pdf","status":"metadata_ready","envelope_id":"envelope","envelope":{"id":"envelope","name":"Contract"}}}
+    /// ```
+    pub async fn get_with_expand<S: AsRef<str>>(
+        &self,
+        document_id: S,
+        expand: &str,
+    ) -> Result<Document> {
+        let path = self.http.path(&["documents", document_id.as_ref()])?;
+        let req = self
+            .http
+            .request(Method::GET, &path)?
+            .query(&[("expand", expand)]);
+        self.http.send_envelope(req).await
+    }
+
     /// Rename a document.
     ///
     /// `PATCH /documents/{document_id}` with body `{ "name": "New name.pdf" }`
     /// (`name` is required, max 255 chars). Returns the updated document.
+    /// Allowed only while uploaded or metadata-ready, before an assignment
+    /// exists. The server normalizes diacritics and unsupported characters.
     ///
     /// # Request payload
     ///

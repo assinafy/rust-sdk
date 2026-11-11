@@ -564,7 +564,7 @@ impl<'a> WebhooksApi<'a> {
     /// paid plans; past the limit the API answers `403`, and a `url` already
     /// used by another endpoint answers `400`. With `signing_enabled`, store
     /// [`WebhookEndpoint::secret`] securely from this response. OAuth applications
-    /// cannot retrieve it later; if lost, delete and recreate that endpoint.
+    /// cannot retrieve it later; if lost, rotate its secret.
     ///
     /// # Request payload
     ///
@@ -766,7 +766,7 @@ impl<'a> WebhooksApi<'a> {
     ///
     /// `POST /accounts/{account_id}/webhooks/endpoints/{endpoint_id}/secret/rotate`.
     /// The old secret stops working immediately. Answers `400` when signing is
-    /// disabled. Not available to OAuth applications; use an API key.
+    /// disabled. Requires the `webhooks:write` OAuth scope.
     ///
     /// # Request payload
     ///
@@ -982,6 +982,49 @@ fn verify_at(
         Ok(())
     } else {
         Err(invalid("no matching v1 signature"))
+    }
+}
+
+impl WebhooksApi<'_> {
+    /// Send one `webhook_test` delivery to this endpoint, even if inactive or paused.
+    /// `POST /accounts/{account_id}/webhooks/endpoints/{endpoint_id}/test`.
+    /// Requires `webhooks:write` for OAuth apps. Limited to ten tests per user per ten minutes.
+    /// # Request payload
+    /// No body. Account and endpoint identifiers are supplied in the route.
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"dispatch-id","event":"webhook_test","kind":"manual","endpoint_id":"endpoint-id","delivered":true}}
+    /// ```
+    pub async fn test_endpoint(&self, endpoint_id: impl AsRef<str>) -> Result<WebhookDispatch> {
+        let path = self.endpoint_path(&[endpoint_id.as_ref(), "test"])?;
+        let req = self.http.request(Method::POST, &path)?;
+        self.http.send_envelope(req).await
+    }
+}
+
+impl WebhooksApi<'_> {
+    /// Rotate the secret with optional 24-hour overlap for the previous key.
+    /// `POST /accounts/{account_id}/webhooks/endpoints/{endpoint_id}/secret/rotate`.
+    /// Requires `webhooks:write` for OAuth apps. Another rotation immediately retires any older key.
+    /// # Request payload
+    /// ```json
+    /// {"keep_previous":true}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"secret":"whsec_example-redacted","previous_secret_expires_at":"2026-10-30T15:00:00Z"}}
+    /// ```
+    pub async fn rotate_endpoint_secret_with_overlap(
+        &self,
+        endpoint_id: impl AsRef<str>,
+        keep_previous: bool,
+    ) -> Result<WebhookEndpointSecret> {
+        let path = self.endpoint_path(&[endpoint_id.as_ref(), "secret", "rotate"])?;
+        let req = self
+            .http
+            .request(Method::POST, &path)?
+            .json(&serde_json::json!({"keep_previous": keep_previous}));
+        self.http.send_envelope(req).await
     }
 }
 

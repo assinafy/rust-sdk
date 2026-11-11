@@ -62,11 +62,11 @@ fn oauth_transport(
     transport(user_agent, timeout, connect_timeout).retry(reqwest::retry::never())
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct HttpClient {
     inner: reqwest::Client,
-    /// [`oauth_transport`], built on first use — a client that never calls
-    /// the OAuth token endpoints never builds it — and shared by clones.
+    /// Credential-free single-send transport, built on first isolated request
+    /// and shared by clones.
     oauth: Arc<OnceLock<reqwest::Client>>,
     timeout: Duration,
     connect_timeout: Duration,
@@ -74,6 +74,15 @@ pub(crate) struct HttpClient {
     auth: Arc<Auth>,
     user_agent: Arc<String>,
     restrict_custom_transport_auth: bool,
+}
+
+impl std::fmt::Debug for HttpClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpClient")
+            .field("base_url", &self.base)
+            .field("auth", &self.auth)
+            .finish_non_exhaustive()
+    }
 }
 
 impl HttpClient {
@@ -204,7 +213,7 @@ impl HttpClient {
         url: Url,
     ) -> Result<RequestBuilder> {
         crate::config::validate_https_url(&url)?;
-        Ok(self.unauthenticated(&self.inner, method, url))
+        Ok(self.unauthenticated(self.single_send_transport()?, method, url))
     }
 
     pub(crate) fn request(&self, method: Method, path: &str) -> Result<RequestBuilder> {
@@ -258,7 +267,21 @@ impl HttpClient {
     /// caller's client, never a redirect, never a second send. No credential
     /// is applied; the OAuth client identifies itself in the body.
     pub(crate) fn request_oauth(&self, path: &str) -> Result<RequestBuilder> {
+        self.request_single_send_public(Method::POST, path)
+    }
+
+    /// Send single-use secrets without credentials, redirects or retries,
+    /// independently of any caller-supplied transport.
+    pub(crate) fn request_single_send_public(
+        &self,
+        method: Method,
+        path: &str,
+    ) -> Result<RequestBuilder> {
         let url = self.url(path)?;
+        Ok(self.unauthenticated(self.single_send_transport()?, method, url))
+    }
+
+    fn single_send_transport(&self) -> Result<&reqwest::Client> {
         let oauth = match self.oauth.get() {
             Some(oauth) => oauth,
             None => {
@@ -268,7 +291,7 @@ impl HttpClient {
                 self.oauth.get_or_init(|| oauth)
             }
         };
-        Ok(self.unauthenticated(oauth, Method::POST, url))
+        Ok(oauth)
     }
 
     fn unauthenticated(
@@ -337,8 +360,15 @@ impl HttpClient {
             let mut destination = target.clone();
             destination.set_query(None);
             crate::config::validate_https_url(&destination)?;
-            let mut redirect = self
-                .inner
+            // A caller's transport may add default credentials or cookies.
+            // A different origin must use a clean SDK-owned transport.
+            let transport =
+                if authenticate_same_origin_redirects && same_origin(&target, &self.base) {
+                    &self.inner
+                } else {
+                    self.single_send_transport()?
+                };
+            let mut redirect = transport
                 .get(target.clone())
                 .header(ACCEPT, "application/octet-stream")
                 .header(reqwest::header::USER_AGENT, self.user_agent.as_str());
@@ -515,13 +545,8 @@ fn unexpected_decode_error(context: &str, error: serde_json::Error, body_len: us
 
 fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Error {
     let insufficient_scope = insufficient_scope_from(headers);
-    let (code, message, data) = match serde_json::from_slice::<serde_json::Value>(body) {
+    let (message, data) = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(serde_json::Value::Object(mut map)) => {
-            let code = map
-                .get("status")
-                .and_then(|v| v.as_u64())
-                .map(|n| n as u16)
-                .unwrap_or_else(|| status.as_u16());
             // The OAuth endpoints answer with RFC 6749 §5.2's flat
             // `{error, error_description}` instead of this API's envelope, so
             // there is no `message` to read; use the description, falling
@@ -533,23 +558,34 @@ fn map_error(status: StatusCode, headers: Option<&HeaderMap>, body: &[u8]) -> Er
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_owned();
-            // Standard error envelopes carry a `data` field. Bodies without one
-            // (e.g. a route-miss `{ name, message, code, status }`) are kept
-            // whole so their `name`/`code` survive.
             let data = match map.remove("data") {
-                Some(data) => data,
+                Some(mut data) => {
+                    map.remove("status");
+                    map.remove("message");
+                    if !map.is_empty() {
+                        // Refusal codes, field errors and credit ceilings live
+                        // beside data, including when data is null.
+                        let mut details = match data {
+                            serde_json::Value::Object(details) => details,
+                            serde_json::Value::Null => serde_json::Map::new(),
+                            value => serde_json::Map::from_iter([("data".into(), value)]),
+                        };
+                        details.extend(map);
+                        data = serde_json::Value::Object(details);
+                    }
+                    data
+                }
                 None => serde_json::Value::Object(map),
             };
-            (code, message, data)
+            (message, data)
         }
         _ => (
-            status.as_u16(),
-            String::from_utf8_lossy(body).into_owned(),
+            format!("non-JSON error response; body length: {} bytes", body.len()),
             serde_json::Value::Null,
         ),
     };
     Error::Api(ApiError {
-        status: code,
+        status: status.as_u16(),
         message,
         data,
         retry_after: headers.and_then(|h| retry_after_from(status, h)),
@@ -587,6 +623,49 @@ mod tests {
         assert_eq!(err.status, 404);
         assert_eq!(err.message, "Signer not found");
         assert_eq!(err.data, serde_json::json!({"field": "id"}));
+    }
+
+    #[test]
+    fn error_details_survive_null_object_and_legacy_data() {
+        for data in [
+            serde_json::Value::Null,
+            serde_json::json!({"hint": "read again"}),
+            serde_json::json!(["legacy"]),
+        ] {
+            let body = serde_json::json!({
+                "status": 200, "message": "Credit ceiling exceeded", "data": data,
+                "code": "CreditCeilingExceeded", "total_credits": 2.0,
+                "max_total_credits": 1.0,
+                "errors": [{"field": null, "code": "Invalid", "message": "Invalid request"}]
+            });
+            let error = map_error(
+                StatusCode::CONFLICT,
+                None,
+                &serde_json::to_vec(&body).unwrap(),
+            );
+            assert_eq!(error.status(), Some(409));
+            assert_eq!(error.code(), Some("CreditCeilingExceeded"));
+            let api = error.api().unwrap();
+            assert_eq!(
+                api.field_errors().unwrap()[0]["field"],
+                serde_json::Value::Null
+            );
+            assert_eq!(api.data["total_credits"], 2.0);
+            assert_eq!(api.data["max_total_credits"], 1.0);
+            if data.is_object() {
+                assert_eq!(api.data["hint"], data["hint"]);
+            } else if data.is_array() {
+                assert_eq!(api.data["data"], data);
+            }
+        }
+    }
+
+    #[test]
+    fn non_json_errors_do_not_echo_secrets() {
+        let error = map_error(StatusCode::BAD_GATEWAY, None, b"sentinel-proxy-secret");
+        assert_eq!(error.status(), Some(502));
+        assert!(!format!("{error} {error:?}").contains("sentinel-proxy-secret"));
+        assert!(error.to_string().contains("body length: 21 bytes"));
     }
 
     #[test]

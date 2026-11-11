@@ -20,6 +20,8 @@ mod assignments;
 mod auth;
 mod contracts;
 mod documents;
+mod embed;
+mod envelopes;
 mod fields;
 mod oauth;
 mod public;
@@ -32,14 +34,15 @@ mod webhooks;
 
 pub use accounts::{
     AccountApi, AccountsApi, CreateAccountBody, DocumentStatsQuery, NotificationSenderType,
-    UpdateAccountBody, UploadLogoRequest,
+    UpdateAccountBody, UpdateNotificationPolicyBody, UpdateNotificationPolicyEvents,
+    UploadLogoRequest,
 };
 pub use activities::{ActivitiesApi, ListActivitiesRequest};
 pub use api_keys::{ApiKeyResponse, ApiKeysApi, CreateApiKeyBody};
 pub use assignments::{
-    AssignmentEntry, AssignmentField, AssignmentsApi, CreateAssignmentBody, CreateAssignmentSigner,
-    DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE, EstimateAssignmentCostBody, IdentityReviewBody,
-    IdentityReviewDecision, ListAssignmentsRequest,
+    AssignmentCreateOptions, AssignmentEntry, AssignmentField, AssignmentsApi,
+    CreateAssignmentBody, CreateAssignmentSigner, DIGITAL_CERTIFICATE_REQUIRES_VIRTUAL_CODE,
+    EstimateAssignmentCostBody, IdentityReviewBody, IdentityReviewDecision, ListAssignmentsRequest,
 };
 pub use auth::{
     AuthApi, ChangePasswordBody, EmailResult, LinkSocialLoginBody, LoginBody,
@@ -51,6 +54,12 @@ pub use contracts::{
 };
 pub use documents::{
     DocumentsApi, ListDocumentsRequest, SearchDocumentsRequest, UploadDocumentRequest,
+};
+pub use embed::{EmbedOriginBody, EmbeddedSigningApi, ExchangeEmbedSessionBody};
+pub use envelopes::{
+    AddEnvelopeDocumentBody, CreateEnvelopeBody, CreateEnvelopeRequest, EnvelopeDocumentBody,
+    EnvelopeSignerConfig, EnvelopesApi, ListEnvelopeActivitiesRequest, ListEnvelopesRequest,
+    UpdateEnvelopeBody,
 };
 pub use fields::{
     CreateFieldBody, FieldsApi, ListFieldsRequest, UpdateFieldBody, ValidateFieldEntry,
@@ -67,9 +76,13 @@ pub use signers::{CreateSignerBody, ListSignersRequest, SignersApi, UpdateSigner
 pub use tags::{CreateTagBody, ListTagsRequest, TagsApi, UpdateTagBody};
 pub use templates::{
     CreateDocumentFromTemplateBody, CreateTemplateRequest, EditorField, EstimateTemplateCostBody,
-    ListTemplatesRequest, TemplateDocumentSigner, TemplateRoleBinding, TemplatesApi,
+    ListTemplatesRequest, TemplateDocumentOptions, TemplateDocumentSigner, TemplateRoleBinding,
+    TemplatesApi,
 };
-pub use users::{ConfirmTotpBody, MfaReauthBody, UpdateNotificationPreferencesBody, UsersApi};
+pub use users::{
+    ConfirmTotpBody, MfaReauthBody, UpdateNotificationPreferencesBody, UpdatePushPreferencesBody,
+    UsersApi,
+};
 pub use webhooks::{
     ListWebhookDispatchesRequest, RegisterWebhookBody, WEBHOOK_TIMESTAMP_TOLERANCE,
     WebhookEndpointBody, WebhooksApi, verify_webhook_signature,

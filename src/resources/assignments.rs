@@ -105,6 +105,39 @@ impl CreateAssignmentSigner {
     }
 }
 
+/// Optional controls for assignment creation.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct AssignmentCreateOptions {
+    /// Maximum credits this request may spend.
+    pub max_total_credits: Option<f64>,
+    /// IDs of signers that should use embedded signing sessions.
+    pub embedded_signer_ids: Vec<String>,
+}
+
+impl AssignmentCreateOptions {
+    /// Set a finite, nonnegative spending ceiling.
+    pub fn max_total_credits(mut self, credits: f64) -> Self {
+        self.max_total_credits = Some(credits);
+        self
+    }
+
+    /// Mark a signer in the request as embedded.
+    pub fn embedded_signer(mut self, id: impl Into<String>) -> Self {
+        self.embedded_signer_ids.push(id.into());
+        self
+    }
+}
+
+pub(crate) fn validate_credit_ceiling(ceiling: Option<f64>) -> Result<()> {
+    if ceiling.is_some_and(|value| !value.is_finite() || value < 0.0) {
+        return Err(Error::Validation(
+            "max_total_credits must be finite and nonnegative".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// `POST /documents/{document_id}/assignments` request body.
 ///
 /// New integrations should use `signers`. The `signer_ids` field remains
@@ -606,6 +639,54 @@ impl<'a> AssignmentsApi<'a> {
         self.http.send_data(req).await
     }
 
+    /// Create an assignment with spending and embedded-signing controls.
+    ///
+    /// `POST /documents/{document_id}/assignments`. Embedded signers require
+    /// Email or Whatsapp verification and the account's Embed feature.
+    ///
+    /// # Request payload
+    ///
+    /// ```json
+    /// {"method":"virtual","signers":[{"id":"signer","embedded":true}],"max_total_credits":1.5}
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"assignment","signing_urls":[{"signer_id":"signer","url":null,"embedded":true}]}}
+    /// ```
+    pub async fn create_with_options<S: AsRef<str>>(
+        &self,
+        document_id: S,
+        body: &CreateAssignmentBody,
+        options: &AssignmentCreateOptions,
+    ) -> Result<Assignment> {
+        validate_create_assignment(body)?;
+        validate_credit_ceiling(options.max_total_credits)?;
+        let mut payload = serde_json::to_value(body)?;
+        if let Some(ceiling) = options.max_total_credits {
+            payload["max_total_credits"] = serde_json::json!(ceiling);
+        }
+        for id in &options.embedded_signer_ids {
+            let signer = payload["signers"]
+                .as_array_mut()
+                .and_then(|signers| {
+                    signers
+                        .iter_mut()
+                        .find(|signer| signer["id"].as_str() == Some(id))
+                })
+                .ok_or_else(|| {
+                    Error::Validation("embedded signer must be present in signers".into())
+                })?;
+            signer["embedded"] = serde_json::json!(true);
+        }
+        let path = self
+            .http
+            .path(&["documents", document_id.as_ref(), "assignments"])?;
+        let req = self.http.request(Method::POST, &path)?.json(&payload);
+        self.http.send_data(req).await
+    }
+
     /// Estimate the cost of an assignment without creating it.
     ///
     /// `POST /documents/{document_id}/assignments/estimate-cost`.
@@ -1044,6 +1125,7 @@ impl<'a> AssignmentsApi<'a> {
     /// Reject a document assignment on behalf of a signer access-code flow.
     ///
     /// `PUT /documents/{document_id}/assignments/{assignment_id}/reject`.
+    /// The decline reason must contain at most 2000 characters.
     ///
     /// # Request payload
     ///
@@ -1062,6 +1144,11 @@ impl<'a> AssignmentsApi<'a> {
         assignment_id: A,
         reason: R,
     ) -> Result<()> {
+        if reason.as_ref().chars().count() > 2000 {
+            return Err(Error::Validation(
+                "decline_reason must contain at most 2000 characters".into(),
+            ));
+        }
         let path = self.http.path(&[
             "documents",
             document_id.as_ref(),

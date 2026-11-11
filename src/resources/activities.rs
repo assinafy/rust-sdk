@@ -9,8 +9,7 @@ use crate::pagination::Page;
 
 /// Builder for `GET /documents/{documentId}/activities`.
 ///
-/// Optional pagination and sorting controls are compatibility parameters that
-/// deployments may ignore.
+/// Supports pagination and sorting by activity identifier.
 #[derive(Debug, Clone)]
 pub struct ListActivitiesRequest<'a> {
     http: &'a HttpClient,
@@ -21,19 +20,19 @@ pub struct ListActivitiesRequest<'a> {
 }
 
 impl<'a> ListActivitiesRequest<'a> {
-    /// Compatibility 1-based page number.
+    /// 1-based page number.
     pub fn page(mut self, page: u32) -> Self {
         self.page = Some(page);
         self
     }
 
-    /// Compatibility results-per-page control.
+    /// Results per page.
     pub fn per_page(mut self, per_page: u32) -> Self {
         self.per_page = Some(per_page);
         self
     }
 
-    /// Compatibility sort expression (e.g. `"-created_at"`).
+    /// Sort by `-id` (newest first, the default) or `id`.
     pub fn sort<S: Into<String>>(mut self, sort: S) -> Self {
         self.sort = Some(sort.into());
         self
@@ -49,7 +48,7 @@ impl<'a> ListActivitiesRequest<'a> {
     /// parameters are URL-encoded; only configured filters are sent.
     ///
     /// ```json
-    /// {"page": 1, "per-page": 20, "sort": "-created_at"}
+    /// {"page": 1, "per-page": 20, "sort": "-id"}
     /// ```
     ///
     /// # Response payload

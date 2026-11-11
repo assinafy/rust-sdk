@@ -251,6 +251,87 @@ impl<'a> PublicApi<'a> {
     }
 }
 
+impl PublicApi<'_> {
+    /// Download a certified PDF using its message-link token. No client credential is sent.
+    /// `GET /signers/downloads/{token}`; append `/pades` for a PAdES artifact.
+    /// Completion links last seven days, resent links 30 minutes. Expired links redirect
+    /// to an expiry page; a non-PDF response returns an unexpected-response error.
+    /// # Request payload
+    /// No body. The token is supplied in the route.
+    /// # Response payload
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: application/pdf
+    ///
+    /// <PDF bytes>
+    /// ```
+    pub async fn download_certified_copy(&self, token: &str) -> Result<(bytes::Bytes, String)> {
+        self.download_certified_copy_artifact(token, false).await
+    }
+
+    /// Download the PAdES certified PDF using its message-link token.
+    /// `GET /signers/downloads/{token}/pades`. Returns `404` when no PAdES artifact exists.
+    /// # Request payload
+    /// No body. The token is supplied in the route; no client credential is sent.
+    /// # Response payload
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: application/pdf
+    ///
+    /// <PAdES PDF bytes>
+    /// ```
+    pub async fn download_certified_copy_pades(
+        &self,
+        token: &str,
+    ) -> Result<(bytes::Bytes, String)> {
+        self.download_certified_copy_artifact(token, true).await
+    }
+
+    async fn download_certified_copy_artifact(
+        &self,
+        token: &str,
+        pades: bool,
+    ) -> Result<(bytes::Bytes, String)> {
+        let path = if pades {
+            self.http.path(&["signers", "downloads", token, "pades"])?
+        } else {
+            self.http.path(&["signers", "downloads", token])?
+        };
+        let req = self.http.request_single_send_public(Method::GET, &path)?;
+        let result = self.http.send_public_download(req).await?;
+        if !result
+            .1
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .eq_ignore_ascii_case("application/pdf")
+        {
+            return Err(Error::UnexpectedResponse(
+                "certified download did not return a PDF (the link may have expired)".into(),
+            ));
+        }
+        Ok(result)
+    }
+    /// Resend a certified copy using an expired link token, to the original signing contact.
+    /// `POST /signers/downloads/{token}/resend`. No client credential is sent.
+    /// Copy-receiver links return `409`; rate limits return `429`.
+    /// # Request payload
+    /// No body. The token is supplied in the route.
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"available":true,"notification_method":"Email","resends_left":null,"sent_to":"u***@example.invalid"}}
+    /// ```
+    pub async fn resend_certified_copy(
+        &self,
+        token: &str,
+    ) -> Result<crate::models::signer::CertifiedCopyResult> {
+        let path = self.http.path(&["signers", "downloads", token, "resend"])?;
+        let req = self.http.request_public(Method::POST, &path)?;
+        self.http.send_envelope(req).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,6 +20,8 @@ pub mod assignment;
 pub mod contract;
 pub mod cost;
 pub mod document;
+pub mod embed;
+pub mod envelope;
 pub mod field;
 pub mod identity;
 pub mod oauth;
@@ -29,7 +31,10 @@ pub mod template;
 pub mod user;
 pub mod webhook;
 
-pub use account::{Account, AccountLimits, AccountTheme, DocumentStatsRow, NotificationSenderType};
+pub use account::{
+    Account, AccountBalances, AccountLimits, AccountTheme, AccountUsage, Balance, DocumentStatsRow,
+    NotificationPolicy, NotificationPolicyEvents, NotificationSenderType, SigningFeatures,
+};
 pub use activity::{Activity, ActivityOrigin};
 pub use assignment::{
     Assignment, AssignmentItem, AssignmentItemField, AssignmentItemSigner, AssignmentMethod,
@@ -44,8 +49,13 @@ pub use contract::{
 };
 pub use cost::{BlockingReason, CostBreakdownItem, CostEstimate};
 pub use document::{
-    ArtifactName, DeclinedBy, Document, DocumentPage, DocumentStatus, DocumentStatusInfo,
-    DocumentVerification, PublicDocument,
+    ArtifactName, CertifiedCopyAvailability, DeclinedBy, Document, DocumentEnvelopeRef,
+    DocumentPage, DocumentStatus, DocumentStatusInfo, DocumentVerification, PublicDocument,
+};
+pub use embed::{EmbedOrigin, EmbedSession, EmbedSessionExchange};
+pub use envelope::{
+    DocumentEnvelope, EnvelopeActivity, EnvelopeCancellation, EnvelopeDocument,
+    EnvelopeReminderResult, EnvelopeSigner,
 };
 pub use field::{FieldDefinition, FieldType, FieldValidationResult};
 pub use identity::{
@@ -54,14 +64,14 @@ pub use identity::{
     IdentityVerificationStatus, SignerIdentityReview,
 };
 pub use oauth::{AuthorizationServerMetadata, ProtectedResourceMetadata, TokenResponse, UserInfo};
-pub use signer::{Signer, SignerSelf, SignerType};
+pub use signer::{CertifiedCopyResult, Signer, SignerSelf, SignerType};
 pub use tag::Tag;
 pub use template::{
     Template, TemplateField, TemplatePage, TemplateRole, TemplateStatus, TemplateTagRef,
 };
 pub use user::{
-    LoginResult, MfaMethod, MfaStatus, NotificationPreferences, RecoveryCodes, SelfUser,
-    TotpEnrollment, UserAccount, UserProfile,
+    LoginResult, MfaMethod, MfaStatus, NotificationPreferences, PushPreferences, RecoveryCodes,
+    SelfUser, TotpEnrollment, UserAccount, UserProfile,
 };
 pub use webhook::{
     WebhookDispatch, WebhookDispatchKind, WebhookEndpoint, WebhookEndpointSecret, WebhookEvent,

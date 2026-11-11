@@ -55,6 +55,18 @@ pub struct Document {
     /// Public verification page for the certificated document.
     #[serde(default)]
     pub verification_url: Option<String>,
+    /// Envelope identifier when requested with `expand=envelope_id`.
+    #[serde(default)]
+    pub envelope_id: Option<String>,
+    /// Envelope identity when requested with `expand=envelope`.
+    #[serde(default)]
+    pub envelope: Option<DocumentEnvelopeRef>,
+    /// Whether this signer's access code is closed, on signer-facing reads.
+    #[serde(default)]
+    pub is_signer_access_closed: Option<bool>,
+    /// Certified-copy delivery availability on signer-facing reads.
+    #[serde(default)]
+    pub certified_copy: Option<CertifiedCopyAvailability>,
     /// Whether contract terms exist for this document or its contract family.
     /// `None` means the endpoint did not determine it.
     #[serde(default)]
@@ -93,6 +105,10 @@ impl fmt::Debug for Document {
             .field("signing_url", &"**redacted**")
             .field("verification_code", &self.verification_code)
             .field("verification_url", &self.verification_url)
+            .field("envelope_id", &self.envelope_id)
+            .field("envelope", &self.envelope)
+            .field("is_signer_access_closed", &self.is_signer_access_closed)
+            .field("certified_copy", &self.certified_copy)
             .field("has_contract", &self.has_contract)
             .field("decline_reason", &self.decline_reason)
             .field("declined_by", &self.declined_by)
@@ -101,6 +117,30 @@ impl fmt::Debug for Document {
             .field("updated_at", &self.updated_at)
             .finish()
     }
+}
+
+/// Envelope identity returned by a document expansion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DocumentEnvelopeRef {
+    /// Envelope identifier.
+    pub id: String,
+    /// Envelope display name.
+    pub name: String,
+}
+
+/// Whether the current signer can request another certified copy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CertifiedCopyAvailability {
+    /// Whether requesting a copy is currently allowed.
+    pub available: bool,
+    /// Delivery channel, or absent when no channel is available.
+    #[serde(default)]
+    pub notification_method: Option<super::NotificationMethod>,
+    /// Remaining WhatsApp re-sends; absent for email delivery.
+    #[serde(default)]
+    pub resends_left: Option<u32>,
 }
 
 /// A single page within a document.
@@ -324,6 +364,9 @@ pub struct DocumentVerification {
     /// Completion timestamp (ISO-8601), when found.
     #[serde(default)]
     pub completed_at: Option<String>,
+    /// First recorded certification timestamp, absent for some historical documents.
+    #[serde(default)]
+    pub certificated_at: Option<String>,
     /// Timestamp the verification was performed (ISO-8601).
     #[serde(default)]
     pub verified_at: Option<String>,

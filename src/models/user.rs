@@ -69,6 +69,7 @@ impl From<UserAccount> for Account {
             secondary_color: None,
             notification_sender_type: None,
             limits: None,
+            signing_features: None,
             created_at: Some(ua.created_at),
         }
     }
@@ -313,4 +314,34 @@ impl fmt::Debug for RecoveryCodes {
             )
             .finish()
     }
+}
+
+/// Personal push-notification preferences, independent of e-mail preferences.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct PushPreferences {
+    /// A signer opened the document for the first time.
+    #[serde(rename = "SignerViewed", default)]
+    pub signer_viewed: Option<bool>,
+    /// A signer signed the document.
+    #[serde(rename = "SignerSigned", default)]
+    pub signer_signed: Option<bool>,
+    /// Every signer has signed and the document is certified.
+    #[serde(rename = "DocumentCompleted", default)]
+    pub document_completed: Option<bool>,
+    /// A signer declined to sign.
+    #[serde(rename = "SignerDeclined", default)]
+    pub signer_declined: Option<bool>,
+    /// The signature deadline is approaching.
+    #[serde(rename = "DocumentAboutToExpire", default)]
+    pub document_about_to_expire: Option<bool>,
+    /// The signature deadline passed.
+    #[serde(rename = "DocumentExpired", default)]
+    pub document_expired: Option<bool>,
+    /// A signer's identity awaits the sender's review. The e-mail for this is always sent.
+    #[serde(rename = "SignerIdentityReviewRequired", default)]
+    pub signer_identity_review_required: Option<bool>,
+    /// A WhatsApp notification to a signer could not be delivered.
+    #[serde(rename = "SignerWhatsappFailed", default)]
+    pub signer_whatsapp_failed: Option<bool>,
 }

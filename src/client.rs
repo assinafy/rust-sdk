@@ -8,8 +8,8 @@ use crate::error::{Error, Result};
 use crate::http::{HttpClient, transport};
 use crate::resources::{
     AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, ContractsApi,
-    DocumentsApi, FieldsApi, OAuthApi, PublicApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi,
-    UsersApi, WebhooksApi,
+    DocumentsApi, EmbeddedSigningApi, EnvelopesApi, FieldsApi, OAuthApi, PublicApi, SignerSelfApi,
+    SignersApi, TagsApi, TemplatesApi, UsersApi, WebhooksApi,
 };
 
 /// Default user-agent used by the SDK.
@@ -133,6 +133,16 @@ impl Client {
         DocumentsApi::new(&self.http)
     }
 
+    /// Multi-document envelopes within a workspace.
+    pub fn envelopes<S: Into<String>>(&self, account_id: S) -> EnvelopesApi<'_> {
+        EnvelopesApi::new(&self.http, account_id.into())
+    }
+
+    /// Allowed iframe origins and single-use embedded signing sessions.
+    pub fn embedded_signing(&self) -> EmbeddedSigningApi<'_> {
+        EmbeddedSigningApi::new(&self.http)
+    }
+
     /// Assignment (signature-request) endpoints.
     pub fn assignments(&self) -> AssignmentsApi<'_> {
         AssignmentsApi::new(&self.http)
@@ -192,7 +202,7 @@ impl std::fmt::Debug for Client {
 ///     .build()
 ///     .unwrap();
 /// ```
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct ClientBuilder {
     base_url: Option<BaseUrl>,
     auth: Option<Auth>,
@@ -201,6 +211,16 @@ pub struct ClientBuilder {
     user_agent: Option<String>,
     http_client: Option<reqwest::Client>,
     allow_authenticated_http_client: bool,
+}
+
+impl std::fmt::Debug for ClientBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientBuilder")
+            .field("base_url", &self.base_url)
+            .field("auth", &self.auth)
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ClientBuilder {
@@ -287,6 +307,10 @@ impl ClientBuilder {
     /// that never follows a redirect or resends a request. It is built on
     /// first use, with TLS 1.2 or later, the platform's root certificates and
     /// this builder's timeouts.
+    /// Cross-origin downloads, authorization-server discovery and single-use
+    /// embed exchanges and public certified-copy downloads also use that
+    /// isolated transport. Disable automatic redirects on custom clients and
+    /// keep credentials in [`Auth`], not default headers or a cookie store.
     pub fn http_client(mut self, client: reqwest::Client) -> Self {
         self.http_client = Some(client);
         self.allow_authenticated_http_client = false;
@@ -302,6 +326,8 @@ impl ClientBuilder {
     /// Reqwest does not expose those settings after construction, so the SDK
     /// cannot verify them. A client that follows redirects can forward an
     /// `X-Api-Key` header to another origin.
+    /// Keep credentials in [`Auth`], not in default headers or a cookie store:
+    /// the supplied transport also handles same-origin public requests.
     ///
     /// As with [`http_client`](Self::http_client), OAuth token and revocation
     /// requests never use the supplied client.
@@ -382,6 +408,23 @@ mod tests {
         String::from_utf8_lossy(&request[..read]).into_owned()
     }
 
+    #[test]
+    fn custom_transport_credentials_are_not_debugged() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-api-key", "sentinel-default-key".parse().unwrap());
+        headers.insert(reqwest::header::COOKIE, "sentinel-cookie".parse().unwrap());
+        let transport = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .unwrap();
+        let builder = Client::builder().http_client(transport);
+        let rendered_builder = format!("{builder:?}");
+        let client = builder.build().unwrap();
+        let rendered = format!("{rendered_builder} {client:?} {:?}", client.documents());
+        assert!(!rendered.contains("sentinel-default-key"));
+        assert!(!rendered.contains("sentinel-cookie"));
+    }
+
     #[tokio::test]
     async fn binary_redirects_follow_without_forwarding_credentials() {
         let target_listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -413,7 +456,11 @@ mod tests {
             request
         });
 
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        default_headers.insert("x-api-key", "sentinel-default-key".parse().unwrap());
+        default_headers.insert(reqwest::header::COOKIE, "sentinel-cookie".parse().unwrap());
         let transport = reqwest::Client::builder()
+            .default_headers(default_headers)
             .referer(false)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(2))
@@ -439,6 +486,8 @@ mod tests {
         assert!(api_request.contains("x-api-key: sentinel-api-key"));
         let target_request = target.join().unwrap().to_ascii_lowercase();
         assert!(!target_request.contains("sentinel-api-key"));
+        assert!(!target_request.contains("sentinel-default-key"));
+        assert!(!target_request.contains("sentinel-cookie"));
         assert!(!target_request.contains("referer:"));
         assert!(target_request.contains("signature=example-redacted-signature"));
     }
@@ -492,8 +541,11 @@ mod tests {
             [first_request, second_request]
         });
 
+        let mut defaults = reqwest::header::HeaderMap::new();
+        defaults.insert("x-api-key", "sentinel-default-key".parse().unwrap());
+        defaults.insert(reqwest::header::COOKIE, "sentinel-cookie".parse().unwrap());
         let transport = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
+            .default_headers(defaults)
             .build()
             .unwrap();
         let base = BaseUrl::custom(format!("http://{address}/v1")).unwrap();
@@ -505,8 +557,8 @@ mod tests {
             .with_auth(Auth::ApiKey("sentinel-api-key".into()));
 
         let (body, content_type) = client
-            .signer_self()
-            .download_document("signer-id", "document-id", "original")
+            .public()
+            .download_certified_copy("example-redacted-download-token")
             .await
             .unwrap();
         assert_eq!(&body[..], b"PDF");
@@ -514,6 +566,8 @@ mod tests {
 
         for request in server.join().unwrap() {
             assert!(!request.to_ascii_lowercase().contains("sentinel-api-key"));
+            assert!(!request.contains("sentinel-default-key"));
+            assert!(!request.contains("sentinel-cookie"));
         }
     }
 }

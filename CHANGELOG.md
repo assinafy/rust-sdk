@@ -4,6 +4,33 @@ All notable changes to the `assinafy` crate are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [3.10.0] - 2026-11-11
+
+### Added
+
+- Document envelopes with cost estimation, idempotent creation, document management,
+  reminders, cancellation, activity and ZIP downloads.
+- Embedded signing origins and single-use iframe sessions, with embedded signer options
+  for assignments and templates.
+- Workspace usage and signing capabilities, notification policies, user push preferences,
+  signer branding and certified-copy delivery.
+- Creation credit ceilings, template idempotency keys and inline email/name signers.
+- Envelope filters and expansions, related-contract document expansion, webhook test
+  deliveries and secret rotation with optional 24-hour overlap.
+- Machine-readable refusal codes and field validation errors.
+
+### Fixed
+
+- Signer artifact downloads now send the required signer access code.
+- Nullable signing URLs, unlimited balances and reduced closed-signer responses decode
+  without losing compatibility with existing public types.
+- Error decoding retains top-level refusal details and the actual HTTP status; non-JSON
+  errors omit response bodies.
+- Custom transport credentials stay out of Debug output, public certified-copy downloads,
+  OAuth discovery and cross-origin download requests.
+- The OAuth example revokes its temporary connection before exiting.
+- Updated the locked rustix dependency to 1.1.6.
+
 ## [3.9.0] - 2026-11-02
 
 ### Added

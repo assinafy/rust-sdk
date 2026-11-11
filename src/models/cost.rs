@@ -59,10 +59,12 @@ pub struct CostEstimate {
     /// Itemised breakdown.
     #[serde(default)]
     pub breakdown: Vec<CostBreakdownItem>,
-    /// Current document credit balance.
+    /// Current document credit balance. Positive infinity means unlimited
+    /// (`null` on the JSON wire), preserving this field's numeric API.
     #[serde(default)]
     pub document_balance: f64,
-    /// Current notification credit balance.
+    /// Current notification credit balance. Positive infinity means unlimited
+    /// (`null` on the JSON wire).
     #[serde(default)]
     pub credit_balance: f64,
     /// Whether the account has the resources to proceed.
@@ -93,9 +95,9 @@ struct CostEstimateWire {
     total: Option<f64>,
     #[serde(default)]
     breakdown: Vec<CostBreakdownItem>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_balance")]
     document_balance: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_balance")]
     credit_balance: f64,
     has_sufficient_resources: Option<bool>,
     has_sufficient_credits: Option<bool>,
@@ -103,6 +105,10 @@ struct CostEstimateWire {
     blocking_reason: Option<BlockingReason>,
     #[serde(default)]
     message: Option<String>,
+}
+
+fn deserialize_balance<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    Option::<f64>::deserialize(deserializer).map(|value| value.unwrap_or(f64::INFINITY))
 }
 
 impl<'de> Deserialize<'de> for CostEstimate {
@@ -138,6 +144,24 @@ impl<'de> Deserialize<'de> for CostEstimate {
 #[cfg(test)]
 mod tests {
     use super::CostEstimate;
+
+    #[test]
+    fn unlimited_balances_decode_and_round_trip_as_null() {
+        let estimate: CostEstimate = serde_json::from_str(
+            r#"{"document_balance":null,"credit_balance":null,"has_sufficient_resources":true}"#,
+        )
+        .unwrap();
+        assert_eq!(estimate.document_balance, f64::INFINITY);
+        assert_eq!(estimate.credit_balance, f64::INFINITY);
+        assert!(estimate.has_sufficient_resources);
+        let encoded = serde_json::to_value(estimate).unwrap();
+        assert!(encoded["document_balance"].is_null());
+        assert!(encoded["credit_balance"].is_null());
+        let finite: CostEstimate =
+            serde_json::from_str(r#"{"document_balance":0,"credit_balance":2.5}"#).unwrap();
+        assert_eq!(finite.document_balance, 0.0);
+        assert_eq!(finite.credit_balance, 2.5);
+    }
 
     #[test]
     fn current_cost_fields_populate_legacy_aliases() {

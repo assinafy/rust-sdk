@@ -13,7 +13,7 @@ Rust 1.86+ and edition 2024 are supported. Rust has no LTS channel; CI tests the
 
 ```toml
 [dependencies]
-assinafy = "3.9"
+assinafy = "3.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 ```
 
@@ -42,7 +42,7 @@ async fn main() -> assinafy::Result<()> {
 }
 ```
 
-Build one cloneable `Client` and use its resource handles: `accounts_api`, `account`, `api_keys`, `users`, `signers`, `signer_self`, `documents`, `assignments`, `contracts`, `tags`, `fields`, `templates`, `webhooks`, `activities`, `public`, `auth_api`, and `oauth`. Calls return `assinafy::Result<T>` and unwrap the API's `{status,message,data}` envelope; OAuth metadata and tokens remain flat.
+Build one cloneable `Client` and use its resource handles: `accounts_api`, `account`, `api_keys`, `users`, `signers`, `signer_self`, `documents`, `envelopes`, `embedded_signing`, `assignments`, `contracts`, `tags`, `fields`, `templates`, `webhooks`, `activities`, `public`, `auth_api`, and `oauth`. Calls return `assinafy::Result<T>` and unwrap the API's `{status,message,data}` envelope; OAuth metadata and tokens remain flat.
 
 ## Authentication and environments
 
@@ -71,7 +71,7 @@ Token and revocation requests are form-encoded, never redirected, and sent once.
 ## Complete document and signing flow
 
 1. Create or reuse signers with `signers(account).create(...)`; provide the contact required by the selected channel and `government_id` when needed.
-2. Upload a PDF (≤25 MB, ≤2000 pages) with `documents().upload(...)`, or instantiate a template with existing signer IDs.
+2. Upload a PDF (≤25 MB, ≤2000 pages) with `documents().upload(...)`, or instantiate a template with existing signer IDs or inline email/name contacts.
 3. Poll `documents().get(...)` with a deadline until `metadata_ready`; persist IDs so retries resume existing resources.
 4. Add tags by **name**, place fields, and call `assignments().estimate_cost(...)`.
 5. Create a `Virtual` or `Collect` assignment. Do not repeat document or assignment creation after an uncertain response.
@@ -99,17 +99,27 @@ A1/A3 completion requires the signer's own certificate and the Web PKI browser e
 
 ## Templates, contracts, and webhooks
 
-Template document creation requires existing signer IDs. `estimate_cost` projects only pricing fields. Template CRUD/page download compatibility routes remain available because they work live even though they are absent from OpenAPI.
+Template document creation accepts existing signer IDs or inline `TemplateDocumentSigner::from_email(role, email, name)` contacts. `estimate_cost` projects only pricing fields. Template CRUD/page download compatibility routes remain available because they work live even though they are absent from OpenAPI.
 
 `contracts(account)` covers list, get/update, related family, renew, and terminate. Nullable update fields distinguish omitted/value/JSON `null`; pass the last `updated_at` for optimistic concurrency. Never retry writes automatically. Contract writes may be plan-gated while reads remain available.
 
-For signed webhooks, create an endpoint with `signing_enabled(true)`, encrypt the one-time returned `secret`, and verify the **raw** body before parsing with `verify_webhook_signature`. Reject replayed webhook IDs in application storage. OAuth apps cannot retrieve/rotate a lost secret; delete and recreate only their own endpoint. Never modify an existing endpoint for a test.
+For signed webhooks, create an endpoint with `signing_enabled(true)`, encrypt the one-time returned `secret`, and verify the **raw** body before parsing with `verify_webhook_signature`. Reject replayed webhook IDs in application storage. OAuth apps cannot read an existing secret, but can rotate it with `webhooks:write`. `rotate_endpoint_secret_with_overlap(id, true)` retains the previous key for 24 hours; store the new key before switching verification. Never modify an existing endpoint for a test.
+
+## Envelopes, embedded signing, and notifications
+
+Use `envelopes(account)` to estimate and send up to 20 prepared documents in one invitation per signer, then read, rename, cancel, add/remove documents, resend reminders, inspect activity, or download the ZIP. Each document names its signers and virtual/collect fields. Certificate and biometric verification still apply. Persist IDs and use the creation request’s `Idempotency-Key` when resuming the same request.
+
+Assignment/template creation options and envelope bodies accept `max_total_credits`; a `CreditCeilingExceeded` refusal creates and charges nothing. Template and envelope creation support idempotency keys.
+
+For embedded signing, configure exact origins with `embedded_signing()`, mark the assignment/template signer embedded, create a short-lived session, and load its URL in the iframe. Exchange is single-use, even on failure: never retry it. Keep the session URL and signer access code private; embedded signers still receive the normal invitation. Iframes support Email/Whatsapp verification; biometric and certificate completion use the hosted signing flow.
+
+Owners can set `account(id).update_notification_policy(...)`; users independently set email and push preferences. Signer clients can load `theme()`/`download_logo()` and request a certified copy; expired download links must be renewed through the resend operation.
 
 ## Queries, errors, and compatibility
 
 List builders expose supported `search`, `sort`, filter, `page`, and `per_page` options. Assignment listing and lightweight document search both support `sort`. Results are `Page<T>` with pagination and rate-limit metadata.
 
-`Error::Api` preserves HTTP status, server message, safe structured data, `Retry-After`, rate-limit headers, and OAuth error codes. Decode errors report category/location/body length, never the response body. Caller-supplied path IDs cannot retarget a route; authenticated binary redirects keep credentials only on safe same-origin HTTPS URLs.
+`Error::Api` preserves HTTP status, server message, refusal `code()` and field errors, structured data, `Retry-After`, rate-limit headers, and OAuth error codes. Decode errors report category/location/body length, never the response body. Caller-supplied path IDs cannot retarget a route; authenticated binary redirects keep credentials only on safe same-origin HTTPS URLs.
 
 Unknown documented response values are retained where the public model supports an `Other`/`Unknown` variant. The SDK preserves live compatibility behavior such as assignment `accountId`, field update extras, old webhook subscription routes, and template CRUD; it does not remove working operations merely because a deployment or plan rejects them.
 

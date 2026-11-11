@@ -4,15 +4,15 @@
 //! electronic-signature API (`https://api.assinafy.com.br/v1`).
 //!
 //! The SDK is organised around a single [`Client`] that exposes a resource
-//! module per API surface — accounts, signers, documents, assignments,
-//! templates, contracts, tags, fields, webhooks, activities, API keys, OAuth, and
+//! module per API surface — accounts, signers, documents, envelopes, embedded
+//! signing, assignments, templates, contracts, tags, fields, webhooks, activities, API keys, OAuth, and
 //! authentication helpers. Every call is `async`, returns a strongly-typed [`Result`], and
-//! uses the same response envelope the API itself uses
-//! (`{ status, message, data }`).
+//! unwraps the API's `{ status, message, data }` response envelope. OAuth
+//! metadata and token responses use flat objects.
 //!
 //! Account-level operations are reached via [`Client::accounts_api`] (list and
 //! create accounts) and [`Client::account`] (get/update/delete an account plus
-//! its theme and logo).
+//! its theme, logo, usage, signing capabilities and notification policy).
 //!
 //! ## Quick start
 //!
@@ -81,8 +81,9 @@
 //! ## Errors
 //!
 //! All operations return [`Result<T, Error>`](Error). API failures preserve
-//! the HTTP status, the server-provided message and the raw `data` payload so
-//! callers can branch on specific error codes without losing fidelity. The API
+//! the HTTP status, server message, structured data and top-level refusal
+//! details. [`Error::code`] and [`ApiError::field_errors`] identify actionable
+//! refusals and invalid fields. The API
 //! rate-limits requests per minute; [`Error::is_rate_limited`] and
 //! [`Error::retry_after`] surface `429` responses and the `Retry-After`
 //! seconds to wait, and [`Error::rate_limit`] exposes the

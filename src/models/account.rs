@@ -88,6 +88,9 @@ pub struct Account {
     /// account endpoint.
     #[serde(default)]
     pub limits: Option<AccountLimits>,
+    /// Capabilities returned with `expand=signing_features`.
+    #[serde(default)]
+    pub signing_features: Option<SigningFeatures>,
     /// ISO-8601 creation timestamp.
     #[serde(default)]
     pub created_at: Option<String>,
@@ -258,4 +261,132 @@ impl<'de> Deserialize<'de> for DocumentStatsRow {
             documents_certified: wire.documents_certified,
         })
     }
+}
+
+/// Workspace rules for document alerts across e-mail and push channels.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct NotificationPolicyEvents {
+    /// DocumentCompleted notification.
+    #[serde(rename = "DocumentCompleted", default)]
+    pub document_completed: Option<bool>,
+    /// SignerDeclined notification.
+    #[serde(rename = "SignerDeclined", default)]
+    pub signer_declined: Option<bool>,
+    /// DocumentCancelled notification.
+    #[serde(rename = "DocumentCancelled", default)]
+    pub document_cancelled: Option<bool>,
+    /// DocumentAboutToExpire notification.
+    #[serde(rename = "DocumentAboutToExpire", default)]
+    pub document_about_to_expire: Option<bool>,
+    /// DocumentExpired notification.
+    #[serde(rename = "DocumentExpired", default)]
+    pub document_expired: Option<bool>,
+    /// DocumentExpirationReset notification.
+    #[serde(rename = "DocumentExpirationReset", default)]
+    pub document_expiration_reset: Option<bool>,
+    /// DocumentProcessingFailed notification.
+    #[serde(rename = "DocumentProcessingFailed", default)]
+    pub document_processing_failed: Option<bool>,
+    /// TemplateProcessingFailed notification.
+    #[serde(rename = "TemplateProcessingFailed", default)]
+    pub template_processing_failed: Option<bool>,
+    /// SignerWhatsappFailed notification.
+    #[serde(rename = "SignerWhatsappFailed", default)]
+    pub signer_whatsapp_failed: Option<bool>,
+    /// ContractRenewalNotice notification.
+    #[serde(rename = "ContractRenewalNotice", default)]
+    pub contract_renewal_notice: Option<bool>,
+    /// ContractExpiring notification.
+    #[serde(rename = "ContractExpiring", default)]
+    pub contract_expiring: Option<bool>,
+    /// ContractExpired notification.
+    #[serde(rename = "ContractExpired", default)]
+    pub contract_expired: Option<bool>,
+    /// ContractRenewed notification.
+    #[serde(rename = "ContractRenewed", default)]
+    pub contract_renewed: Option<bool>,
+    /// SignerViewed notification.
+    #[serde(rename = "SignerViewed", default)]
+    pub signer_viewed: Option<bool>,
+    /// SignerSigned notification.
+    #[serde(rename = "SignerSigned", default)]
+    pub signer_signed: Option<bool>,
+    /// Turns off the push only; the identity review e-mail is always sent.
+    #[serde(rename = "SignerIdentityReviewRequired", default)]
+    pub signer_identity_review_required: Option<bool>,
+}
+
+/// Workspace notification policy. Only owners may edit it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct NotificationPolicy {
+    /// Whether the requesting user may edit this policy.
+    #[serde(default)]
+    pub editable: bool,
+    /// Whether owners receive push alerts for every member's documents.
+    #[serde(default)]
+    pub owners_receive_all: bool,
+    /// Workspace-wide event switches; identity-review e-mail is always sent.
+    #[serde(default)]
+    pub events: NotificationPolicyEvents,
+}
+/// Signing capabilities included in the workspace's current subscription.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SigningFeatures {
+    /// ICP-Brasil certificate verification.
+    #[serde(rename = "DigitalCertificate", default)]
+    pub digital_certificate: bool,
+    /// Identity document and face matching.
+    #[serde(rename = "VerificationIdDocumentFaceMatchBasic", default)]
+    pub id_document_face_match_basic: bool,
+    /// WhatsApp notifications and verification.
+    #[serde(rename = "WhatsappNotification", default)]
+    pub whatsapp_notification: bool,
+    /// Signing without a verification code.
+    #[serde(rename = "VerificationBypass", default)]
+    pub verification_bypass: bool,
+    /// Embedded signing.
+    #[serde(rename = "Embed", default)]
+    pub embed: bool,
+}
+
+/// Remaining quantity and consumption for a document or credit pool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Balance {
+    /// Remaining quantity; `None` means unlimited.
+    #[serde(default)]
+    pub balance: Option<f64>,
+    /// Cycle or pool allowance; `None` means unlimited or not cycle-limited.
+    #[serde(default)]
+    pub limit: Option<f64>,
+    /// Quantity consumed in the current cycle.
+    #[serde(default)]
+    pub spent: f64,
+}
+
+/// Workspace document and credit pools.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AccountBalances {
+    /// Document allowance and consumption.
+    pub documents: Balance,
+    /// Credit allowance and consumption.
+    pub credits: Balance,
+}
+
+/// Workspace plan name, allowance-renewal date, and balances.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AccountUsage {
+    /// Plan name; absent if there is no plan or it was retired.
+    #[serde(default)]
+    pub plan: Option<String>,
+    /// Next document-allowance renewal date (`YYYY-MM-DD`), when applicable.
+    #[serde(default)]
+    pub documents_renewal_date: Option<String>,
+    /// Document and credit balances.
+    pub balances: AccountBalances,
 }

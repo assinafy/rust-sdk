@@ -4,8 +4,7 @@
 //! (`?signer-access-code={code}`), and that code is the only credential sent:
 //! an API key or user token is refused before any request is made. The two
 //! routes the API also opens to workspaces have explicit `*_as_workspace`
-//! variants. The signer artifact-download route is the exception: the
-//! OpenAPI contract declares it unauthenticated, so nothing is sent.
+//! variants.
 
 use bytes::Bytes;
 use reqwest::Method;
@@ -191,7 +190,7 @@ impl SignMultipleDocumentsBody {
 pub struct DeclineMultipleDocumentsBody {
     /// Document IDs to decline.
     pub document_ids: Vec<String>,
-    /// Decline reason applied to every document.
+    /// Decline reason applied to every document, at most 2000 characters.
     pub decline_reason: String,
 }
 
@@ -222,9 +221,16 @@ pub struct ListSignerDocumentsRequest<'a> {
     search: Option<String>,
     sort: Option<String>,
     workspace: bool,
+    envelope_id: Option<String>,
 }
 
 impl<'a> ListSignerDocumentsRequest<'a> {
+    /// Restrict the list to documents belonging to this envelope.
+    pub fn envelope_id(mut self, envelope_id: impl Into<String>) -> Self {
+        self.envelope_id = Some(envelope_id.into());
+        self
+    }
+
     /// 1-based page number.
     pub fn page(mut self, page: u32) -> Self {
         self.page = Some(page);
@@ -315,6 +321,9 @@ impl<'a> ListSignerDocumentsRequest<'a> {
             self.http.request_signer(Method::GET, &path)?
         };
         let mut q: Vec<(&str, String)> = Vec::new();
+        if let Some(v) = self.envelope_id {
+            q.push(("envelope_id", v));
+        }
         if let Some(v) = self.page {
             q.push(("page", v.to_string()));
         }
@@ -342,8 +351,7 @@ impl<'a> ListSignerDocumentsRequest<'a> {
 
 /// Signer-facing endpoints.
 ///
-/// Every method except [`download_document`](Self::download_document) and the
-/// `*_as_workspace` variants requires a non-empty [`crate::Auth::AccessCode`]
+/// Every method except the `*_as_workspace` variants requires a non-empty [`crate::Auth::AccessCode`]
 /// and sends only that code; any other credential is refused with
 /// [`crate::Error::Config`], an empty code with [`crate::Error::Validation`].
 #[derive(Debug)]
@@ -811,6 +819,7 @@ impl<'a> SignerSelfApi<'a> {
             search: None,
             sort: None,
             workspace,
+            envelope_id: None,
         }
     }
 
@@ -957,6 +966,11 @@ impl<'a> SignerSelfApi<'a> {
     /// }
     /// ```
     pub async fn decline_multiple(&self, body: &DeclineMultipleDocumentsBody) -> Result<()> {
+        if body.decline_reason.chars().count() > 2000 {
+            return Err(Error::Validation(
+                "decline reason must contain at most 2000 characters".into(),
+            ));
+        }
         let req = self
             .http
             .request_signer(Method::PUT, "signers/documents/decline-multiple")?
@@ -968,11 +982,10 @@ impl<'a> SignerSelfApi<'a> {
     ///
     /// `GET /signers/{signer_id}/documents/{document_id}/download/{artifact_name}`.
     ///
-    /// Only `original`, `certificated`, `certificate-page`, `pades`, and `bundle` are
-    /// valid here — unlike [`DocumentsApi::download_artifact`](crate::resources::DocumentsApi::download_artifact),
-    /// [`ArtifactName::Thumbnail`] is **not** redirected on this signer-facing
-    /// route: no equivalent signer-facing thumbnail route exists to redirect
-    /// to, so passing it will 404.
+    /// Only `original` is available while the signer still has to sign;
+    /// other artifacts return `403`. Certified copies are delivered to the
+    /// original contact; use [`Self::resend_certified_copy`] to request one.
+    /// The artifact argument remains available for deployment compatibility.
     ///
     /// # Response
     ///
@@ -1010,8 +1023,8 @@ impl<'a> SignerSelfApi<'a> {
             "download",
             artifact.as_str(),
         ])?;
-        let req = self.http.request_public(Method::GET, &path)?;
-        self.http.send_public_download(req).await
+        let req = self.http.request_signer(Method::GET, &path)?;
+        self.http.send_download(req).await
     }
 
     /// Upload a signature or initial image.
@@ -1135,5 +1148,165 @@ impl<'a> SignerSelfApi<'a> {
         let path = self.http.path(&["signature", kind.as_str()])?;
         let req = self.http.request_signer(Method::GET, &path)?;
         self.http.send_download(req).await
+    }
+}
+
+impl SignerSelfApi<'_> {
+    /// Read the sending workspace's branding, including before verification or after deletion.
+    /// `GET /sign/theme`.
+    /// # Request payload
+    /// No body or query parameters other than the signer access code.
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"account_name":"Example Workspace","primary_color":"2072b9","secondary_color":"ffffff","logo":null}}
+    /// ```
+    pub async fn theme(&self) -> Result<crate::models::AccountTheme> {
+        let req = self.http.request_signer(Method::GET, "sign/theme")?;
+        self.http.send_envelope(req).await
+    }
+    /// Download the sending workspace's logo. Returns `404` when none is set.
+    /// `GET /sign/logo`.
+    /// # Request payload
+    /// No body or query parameters other than the signer access code.
+    /// # Response payload
+    /// ```text
+    /// HTTP/1.1 200 OK
+    /// Content-Type: image/png
+    ///
+    /// <image bytes>
+    /// ```
+    pub async fn download_logo(&self) -> Result<(Bytes, String)> {
+        let req = self.http.request_signer(Method::GET, "sign/logo")?;
+        self.http.send_download(req).await
+    }
+    /// Read the signing document with optional envelope context or another envelope document.
+    /// `GET /sign`. A closed code returns a reduced document; a preparing document returns `409`.
+    /// # Request payload
+    /// ```json
+    /// {"has_accepted_terms":true,"expand":"envelope","document_id":"document-id"}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"document-id","name":"example.pdf","status":"certificated","current_signer":{"id":"signer-id","completed":true},"is_signer_access_closed":true,"certified_copy":{"available":true,"notification_method":"Email","resends_left":null}}}
+    /// ```
+    pub async fn signable_document_with_options(
+        &self,
+        has_accepted_terms: Option<bool>,
+        expand_envelope: bool,
+        document_id: Option<&str>,
+    ) -> Result<Document> {
+        let mut req = self.http.request_signer(Method::GET, "sign")?;
+        if let Some(accepted) = has_accepted_terms {
+            req = req.query(&[("has_accepted_terms", accepted)]);
+        }
+        if expand_envelope {
+            req = req.query(&[("expand", "envelope")]);
+        }
+        if let Some(id) = document_id {
+            if id.trim().is_empty() {
+                return Err(Error::Validation("document_id must not be empty".into()));
+            }
+            req = req.query(&[("document_id", id)]);
+        }
+        self.http.send_data(req).await
+    }
+    /// Resend the certified copy to the original contact, including after access-code closure.
+    /// `POST /sign/certified-copy`. E-mail allows one request per two minutes and ten per day;
+    /// WhatsApp allows one resend. The new download link lasts 30 minutes.
+    /// # Request payload
+    /// Omit `document_id` for the current document, or select another document in its envelope.
+    /// ```json
+    /// {"document_id":"document-id"}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"available":true,"notification_method":"Email","resends_left":null,"sent_to":"u***@example.invalid"}}
+    /// ```
+    pub async fn resend_certified_copy(
+        &self,
+        document_id: Option<&str>,
+    ) -> Result<crate::models::signer::CertifiedCopyResult> {
+        let mut req = self
+            .http
+            .request_signer(Method::POST, "sign/certified-copy")?;
+        if let Some(id) = document_id {
+            if id.trim().is_empty() {
+                return Err(Error::Validation("document_id must not be empty".into()));
+            }
+            req = req.json(&serde_json::json!({"document_id":id}));
+        }
+        self.http.send_envelope(req).await
+    }
+}
+
+impl SignerSelfApi<'_> {
+    /// Read the current document and its envelope before verification.
+    /// `GET /signers/{signer_id}/document?expand=envelope`.
+    /// # Request payload
+    /// ```json
+    /// {"expand":"envelope"}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"document-id","name":"example.pdf","status":"pending_signature","envelope":{"id":"envelope-id","name":"Example envelope"}}}
+    /// ```
+    pub async fn current_document_with_envelope(
+        &self,
+        signer_id: impl AsRef<str>,
+    ) -> Result<Document> {
+        let path = self
+            .http
+            .path(&["signers", signer_id.as_ref(), "document"])?;
+        let req = self
+            .http
+            .request_signer(Method::GET, &path)?
+            .query(&[("expand", "envelope")]);
+        self.http.send_envelope(req).await
+    }
+    /// Search a signer's documents within an envelope using their access code.
+    /// `GET /signers/{signer_id}/documents/search`.
+    /// # Request payload
+    /// ```json
+    /// {"search":"contract","envelope_id":"envelope-id"}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":[{"id":"document-id","name":"contract.pdf","status":"pending_signature"}]}
+    /// ```
+    pub async fn search_documents_in_envelope(
+        &self,
+        signer_id: impl AsRef<str>,
+        term: impl AsRef<str>,
+        envelope_id: impl AsRef<str>,
+    ) -> Result<Page<Document>> {
+        let path = self.search_path(signer_id.as_ref())?;
+        let req = self
+            .http
+            .request_signer(Method::GET, &path)?
+            .query(&[("envelope_id", envelope_id.as_ref())]);
+        self.send_search(req, term.as_ref()).await
+    }
+    /// Search a signer's envelope documents with a workspace API key or user token.
+    /// `GET /signers/{signer_id}/documents/search`.
+    /// # Request payload
+    /// ```json
+    /// {"search":"contract","envelope_id":"envelope-id"}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":[{"id":"document-id","name":"contract.pdf","status":"pending_signature"}]}
+    /// ```
+    pub async fn search_documents_in_envelope_as_workspace(
+        &self,
+        signer_id: impl AsRef<str>,
+        term: impl AsRef<str>,
+        envelope_id: impl AsRef<str>,
+    ) -> Result<Page<Document>> {
+        let path = self.search_path(signer_id.as_ref())?;
+        let req = self
+            .http
+            .request_workspace(Method::GET, &path)?
+            .query(&[("envelope_id", envelope_id.as_ref())]);
+        self.send_search(req, term.as_ref()).await
     }
 }

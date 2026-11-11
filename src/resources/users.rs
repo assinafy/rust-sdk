@@ -609,6 +609,135 @@ impl<'a> UsersApi<'a> {
     }
 }
 
+/// Partial update of personal push preferences. Omitted keys remain unchanged.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdatePushPreferencesBody {
+    #[serde(rename = "SignerViewed", skip_serializing_if = "Option::is_none")]
+    signer_viewed: Option<bool>,
+    #[serde(rename = "SignerSigned", skip_serializing_if = "Option::is_none")]
+    signer_signed: Option<bool>,
+    #[serde(rename = "DocumentCompleted", skip_serializing_if = "Option::is_none")]
+    document_completed: Option<bool>,
+    #[serde(rename = "SignerDeclined", skip_serializing_if = "Option::is_none")]
+    signer_declined: Option<bool>,
+    #[serde(
+        rename = "DocumentAboutToExpire",
+        skip_serializing_if = "Option::is_none"
+    )]
+    document_about_to_expire: Option<bool>,
+    #[serde(rename = "DocumentExpired", skip_serializing_if = "Option::is_none")]
+    document_expired: Option<bool>,
+    #[serde(
+        rename = "SignerIdentityReviewRequired",
+        skip_serializing_if = "Option::is_none"
+    )]
+    signer_identity_review_required: Option<bool>,
+    #[serde(
+        rename = "SignerWhatsappFailed",
+        skip_serializing_if = "Option::is_none"
+    )]
+    signer_whatsapp_failed: Option<bool>,
+}
+impl UpdatePushPreferencesBody {
+    /// Start an empty partial update.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Enable or disable SignerViewed.
+    pub fn signer_viewed(mut self, enabled: bool) -> Self {
+        self.signer_viewed = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerSigned.
+    pub fn signer_signed(mut self, enabled: bool) -> Self {
+        self.signer_signed = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentCompleted.
+    pub fn document_completed(mut self, enabled: bool) -> Self {
+        self.document_completed = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerDeclined.
+    pub fn signer_declined(mut self, enabled: bool) -> Self {
+        self.signer_declined = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentAboutToExpire.
+    pub fn document_about_to_expire(mut self, enabled: bool) -> Self {
+        self.document_about_to_expire = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentExpired.
+    pub fn document_expired(mut self, enabled: bool) -> Self {
+        self.document_expired = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerIdentityReviewRequired.
+    pub fn signer_identity_review_required(mut self, enabled: bool) -> Self {
+        self.signer_identity_review_required = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerWhatsappFailed.
+    pub fn signer_whatsapp_failed(mut self, enabled: bool) -> Self {
+        self.signer_whatsapp_failed = Some(enabled);
+        self
+    }
+    /// Whether no preference was supplied.
+    pub fn is_empty(&self) -> bool {
+        self.signer_viewed.is_none()
+            && self.signer_signed.is_none()
+            && self.document_completed.is_none()
+            && self.signer_declined.is_none()
+            && self.document_about_to_expire.is_none()
+            && self.document_expired.is_none()
+            && self.signer_identity_review_required.is_none()
+            && self.signer_whatsapp_failed.is_none()
+    }
+}
+
+impl UsersApi<'_> {
+    /// Read personal push preferences. Third-party OAuth apps receive `403`.
+    /// `GET /users/self/push-preferences`.
+    /// # Request payload
+    /// No body or query parameters.
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"SignerViewed":true,"SignerSigned":true}}
+    /// ```
+    pub async fn push_preferences(&self) -> Result<crate::models::user::PushPreferences> {
+        let req = self
+            .http
+            .request(Method::GET, "users/self/push-preferences")?;
+        self.http.send_envelope(req).await
+    }
+    /// Update personal push preferences. Third-party OAuth apps receive `403`.
+    /// `PUT /users/self/push-preferences`.
+    /// # Request payload
+    /// ```json
+    /// {"SignerViewed":false}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"SignerViewed":false,"SignerSigned":true}}
+    /// ```
+    pub async fn update_push_preferences(
+        &self,
+        body: &UpdatePushPreferencesBody,
+    ) -> Result<crate::models::user::PushPreferences> {
+        if body.is_empty() {
+            return Err(Error::Validation(
+                "push preference update must not be empty".into(),
+            ));
+        }
+        let req = self
+            .http
+            .request(Method::PUT, "users/self/push-preferences")?
+            .json(body);
+        self.http.send_envelope(req).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

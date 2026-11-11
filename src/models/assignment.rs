@@ -157,7 +157,8 @@ pub struct AssignmentSigner {
     pub resource: Option<String>,
     /// Signer identifier.
     pub id: String,
-    /// Full name.
+    /// Full name, empty on a closed signer-access response.
+    #[serde(default)]
     pub full_name: String,
     /// Email address.
     #[serde(default)]
@@ -289,8 +290,13 @@ pub struct AssignmentItem {
 pub struct SigningUrl {
     /// Signer identifier.
     pub signer_id: String,
-    /// Direct signing URL.
+    /// Invitation page URL; empty when the server returns `null` for a
+    /// WhatsApp-only or embedded signer.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub url: String,
+    /// Whether this signer signs through an embedded session.
+    #[serde(default)]
+    pub embedded: bool,
 }
 
 impl fmt::Debug for SigningUrl {
@@ -298,6 +304,7 @@ impl fmt::Debug for SigningUrl {
         f.debug_struct("SigningUrl")
             .field("signer_id", &self.signer_id)
             .field("url", &"**redacted**")
+            .field("embedded", &self.embedded)
             .finish()
     }
 }

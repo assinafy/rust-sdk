@@ -93,3 +93,20 @@ pub struct SignerSelf {
     #[serde(default)]
     pub verification_method: Option<super::VerificationMethod>,
 }
+
+/// Availability and delivery result of a certified-copy resend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct CertifiedCopyResult {
+    /// Whether another resend can be requested.
+    pub available: bool,
+    /// Original signature-request channel, when available.
+    #[serde(default)]
+    pub notification_method: Option<super::NotificationMethod>,
+    /// WhatsApp resends left; absent for e-mail.
+    #[serde(default)]
+    pub resends_left: Option<u32>,
+    /// Masked destination contact.
+    #[serde(default)]
+    pub sent_to: Option<String>,
+}

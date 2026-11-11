@@ -90,6 +90,12 @@ impl Error {
         self.api().and_then(ApiError::oauth_error)
     }
 
+    /// Returns the API's machine-readable refusal code, such as
+    /// `PlanRestricted`, `ContractChanged` or `CreditCeilingExceeded`.
+    pub fn code(&self) -> Option<&str> {
+        self.api().and_then(ApiError::code)
+    }
+
     /// Returns the `X-Rate-Limit-*` window reported with an API error. See
     /// [`ApiError::rate_limit`].
     pub fn rate_limit(&self) -> Option<RateLimit> {
@@ -109,13 +115,15 @@ impl Error {
 /// Most error responses use the standard `{ status, message, data }`
 /// envelope. A "route not found" response (as opposed to a missing
 /// resource) instead returns a distinct `{ name, message, code, status }`
-/// shape with no `data` field; [`http`](crate)'s error mapping preserves
-/// that whole body in `data` so callers can still recover `name`/`code`.
+/// shape with no `data` field; the error mapping preserves that whole body
+/// in `data`. Top-level refusal details (`code`, `errors`, credit ceilings)
+/// are merged into `data` when it is an object or null; a non-object payload
+/// is retained under the `data` key alongside those details.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[error("{message} (status {status})")]
 #[non_exhaustive]
 pub struct ApiError {
-    /// HTTP status code (also echoed inside the envelope).
+    /// HTTP status code from the response, independent of the body.
     pub status: u16,
     /// Human-readable error message from the server.
     pub message: String,
@@ -158,6 +166,17 @@ pub struct RateLimit {
 }
 
 impl ApiError {
+    /// Machine-readable refusal code, when the API supplies one.
+    pub fn code(&self) -> Option<&str> {
+        self.data.get("code")?.as_str()
+    }
+
+    /// Field validation errors, including nullable `field`, `code` and
+    /// `message` entries. Unknown future fields remain available as JSON.
+    pub fn field_errors(&self) -> Option<&[serde_json::Value]> {
+        self.data.get("errors")?.as_array().map(Vec::as_slice)
+    }
+
     /// Returns the RFC 6749 §5.2 error code when the failure came from an
     /// OAuth endpoint.
     ///

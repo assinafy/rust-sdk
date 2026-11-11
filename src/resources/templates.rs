@@ -194,10 +194,9 @@ impl<'a> ListTemplatesRequest<'a> {
 ///
 /// One entry in the `signers[]` array of the create/estimate body. `role_id`
 /// is always required. [`create_document`](TemplatesApi::create_document)
-/// additionally requires `id` — the signer must already exist in the
-/// account, so create it with
-/// [`SignersApi::create`](crate::resources::SignersApi::create) first and
-/// bind it with [`TemplateDocumentSigner::existing`].
+/// additionally requires `id` or `email`. Bind an existing signer with
+/// [`TemplateDocumentSigner::existing`], or resolve/create one by email with
+/// [`TemplateDocumentSigner::from_email`].
 /// [`estimate_cost`](TemplatesApi::estimate_cost) needs only `role_id`, so
 /// [`TemplateDocumentSigner::role`] is enough there.
 ///
@@ -217,14 +216,17 @@ pub struct TemplateDocumentSigner {
     /// Existing signer identifier to bind to the role.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// Legacy inline-signer field. The current create endpoint rejects inline
-    /// signers; use [`TemplateDocumentSigner::existing`] instead.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Full name for a signer created by email; serialized as `name`.
+    #[serde(
+        rename = "name",
+        alias = "full_name",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub full_name: Option<String>,
-    /// Legacy inline-signer field, unsupported by the current create endpoint.
+    /// Contact information used when resolving or creating a signer by email.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    /// Legacy inline-signer field, unsupported by the current create endpoint.
+    /// Contact information used when resolving or creating a signer by email.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
     /// Verification method override. `DigitalCertificate` is valid only for a
@@ -276,17 +278,7 @@ impl TemplateDocumentSigner {
         }
     }
 
-    /// Create an inline signer for a template role.
-    ///
-    /// [`create_document`](TemplatesApi::create_document) requires each signer
-    /// to already exist in the account and rejects this inline form before
-    /// sending. Create the signer with
-    /// [`SignersApi::create`](crate::resources::SignersApi::create), then bind
-    /// it with [`TemplateDocumentSigner::existing`].
-    #[deprecated(
-        since = "2.0.0",
-        note = "create_document requires an existing signer id; use TemplateDocumentSigner::existing after SignersApi::create"
-    )]
+    /// Start an inline signer; set an email before creating the document.
     pub fn inline<R, N>(role_id: R, full_name: N) -> Self
     where
         R: Into<String>,
@@ -304,21 +296,23 @@ impl TemplateDocumentSigner {
         }
     }
 
-    /// Set the legacy inline-signer email address.
-    #[deprecated(
-        since = "2.0.1",
-        note = "template document creation requires an existing signer id"
-    )]
+    /// Resolve an account signer by email, or create one with the given name.
+    /// An existing `id`, when set, takes precedence over email.
+    pub fn from_email(
+        role_id: impl Into<String>,
+        email: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
+        Self::inline(role_id, name).email(email)
+    }
+
+    /// Set the email used to resolve or create the signer.
     pub fn email<S: Into<String>>(mut self, email: S) -> Self {
         self.email = Some(email.into());
         self
     }
 
-    /// Set the legacy inline-signer WhatsApp phone number.
-    #[deprecated(
-        since = "2.0.1",
-        note = "template document creation requires an existing signer id"
-    )]
+    /// Set the WhatsApp phone number for a signer created by email.
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
         self
@@ -374,23 +368,12 @@ fn validate_create_document(body: &CreateDocumentFromTemplateBody) -> Result<()>
             "template document creation requires at least one signer".into(),
         ));
     }
-    if body
-        .signers
-        .iter()
-        .any(|signer| signer.id.as_deref().is_none_or(str::is_empty))
-    {
-        return Err(Error::Config(
-            "every template document signer must have an id".into(),
-        ));
-    }
     if body.signers.iter().any(|signer| {
-        signer.full_name.is_some()
-            || signer.email.is_some()
-            || signer.whatsapp_phone_number.is_some()
+        signer.id.as_deref().is_none_or(str::is_empty)
+            && signer.email.as_deref().is_none_or(str::is_empty)
     }) {
         return Err(Error::Config(
-            "template document signers cannot contain inline name, email, or WhatsApp fields; create the signer first and pass its id"
-                .into(),
+            "every template document signer must have an id or email".into(),
         ));
     }
     if let Some(field) = body
@@ -413,6 +396,38 @@ impl EditorField {
             field_id: field_id.into(),
             value: value.into(),
         }
+    }
+}
+
+/// Optional controls for creating a document from a template.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct TemplateDocumentOptions {
+    /// Maximum credits the request may spend.
+    pub max_total_credits: Option<f64>,
+    /// Case-sensitive key reused only for retries of the same intended document.
+    pub idempotency_key: Option<String>,
+    /// Template role IDs whose signers should use embedded sessions.
+    pub embedded_role_ids: Vec<String>,
+}
+
+impl TemplateDocumentOptions {
+    /// Set a finite, nonnegative spending ceiling.
+    pub fn max_total_credits(mut self, credits: f64) -> Self {
+        self.max_total_credits = Some(credits);
+        self
+    }
+
+    /// Set a key that survives uncertain responses and remains tied to this document.
+    pub fn idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+
+    /// Mark the signer assigned to a template role as embedded.
+    pub fn embedded_role(mut self, role_id: impl Into<String>) -> Self {
+        self.embedded_role_ids.push(role_id.into());
+        self
     }
 }
 
@@ -861,6 +876,64 @@ impl<'a> TemplatesApi<'a> {
         self.http.send_data(req).await
     }
 
+    /// Create a template document with spending, retry and embedded-signing controls.
+    ///
+    /// `POST /accounts/{account_id}/templates/{template_id}/documents`.
+    /// Reusing `Idempotency-Key` returns the original document without another
+    /// creation or charge. A key belongs to its template and does not expire.
+    ///
+    /// # Request payload
+    ///
+    /// Optional header: `Idempotency-Key: unique-document-key`.
+    ///
+    /// ```json
+    /// {"signers":[{"role_id":"role","id":"signer","embedded":true}],"max_total_credits":1.5}
+    /// ```
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"document","name":"Contract.pdf","status":"uploaded"}}
+    /// ```
+    pub async fn create_document_with_options<S: AsRef<str>>(
+        &self,
+        template_id: S,
+        body: &CreateDocumentFromTemplateBody,
+        options: &TemplateDocumentOptions,
+    ) -> Result<Document> {
+        validate_create_document(body)?;
+        super::assignments::validate_credit_ceiling(options.max_total_credits)?;
+        let mut payload = serde_json::to_value(body)?;
+        if let Some(ceiling) = options.max_total_credits {
+            payload["max_total_credits"] = serde_json::json!(ceiling);
+        }
+        for id in &options.embedded_role_ids {
+            let signer = payload["signers"]
+                .as_array_mut()
+                .and_then(|signers| {
+                    signers
+                        .iter_mut()
+                        .find(|signer| signer["role_id"].as_str() == Some(id))
+                })
+                .ok_or_else(|| {
+                    Error::Validation("embedded role must be present in signers".into())
+                })?;
+            signer["embedded"] = serde_json::json!(true);
+        }
+        let path = self.http.path(&[
+            "accounts",
+            self.account_id.as_str(),
+            "templates",
+            template_id.as_ref(),
+            "documents",
+        ])?;
+        let mut req = self.http.request(Method::POST, &path)?.json(&payload);
+        if let Some(key) = &options.idempotency_key {
+            req = req.header("Idempotency-Key", key);
+        }
+        self.http.send_data(req).await
+    }
+
     /// Estimate the cost of creating a document from a template.
     ///
     /// `POST /accounts/{account_id}/templates/{template_id}/documents/estimate-cost`.
@@ -957,7 +1030,7 @@ mod tests {
     }
 
     #[test]
-    fn create_document_requires_existing_signers() {
+    fn create_document_requires_signer_id_or_email() {
         assert!(matches!(
             validate_create_document(&CreateDocumentFromTemplateBody::default()),
             Err(Error::Config(_))
@@ -978,9 +1051,6 @@ mod tests {
         let inline_fields = CreateDocumentFromTemplateBody::default()
             .signers([TemplateDocumentSigner::existing("role-id", "signer-id")
                 .email("user@example.invalid")]);
-        assert!(matches!(
-            validate_create_document(&inline_fields),
-            Err(Error::Config(_))
-        ));
+        assert!(validate_create_document(&inline_fields).is_ok());
     }
 }

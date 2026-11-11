@@ -109,6 +109,10 @@ pub struct WebhookDispatch {
     /// HTTP status returned by the endpoint, when available.
     #[serde(default)]
     pub http_status: Option<u16>,
+    /// Milliseconds until the endpoint answered or failed; absent for older
+    /// entries or when no request was sent.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
     /// Response body returned by the endpoint, when available.
     #[serde(default)]
     pub response_body: Option<String>,
@@ -158,8 +162,8 @@ pub struct WebhookEndpoint {
     /// Whether deliveries carry a `webhook-signature` header.
     #[serde(default)]
     pub signing_enabled: bool,
-    /// Signing secret returned only when creating a signed endpoint. Store it
-    /// securely: OAuth applications cannot retrieve or rotate it later.
+    /// Signing secret returned when creating a signed endpoint or turning signing on.
+    /// Store it securely; OAuth apps can rotate it but cannot retrieve it later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
     /// Creation timestamp.
@@ -229,6 +233,9 @@ pub struct WebhookEvent {
 pub struct WebhookEndpointSecret {
     /// `whsec_` followed by the base64-encoded signing key.
     pub secret: String,
+    /// ISO-8601 timestamp when the previous secret stops signing, for overlap rotations.
+    #[serde(default)]
+    pub previous_secret_expires_at: Option<String>,
 }
 
 impl fmt::Debug for WebhookEndpointSecret {

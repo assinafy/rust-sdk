@@ -4,7 +4,8 @@
 //! credentials, so running the example with only `ASSINAFY_OAUTH_CLIENT_ID`
 //! set prints a URL you can open in a browser. Paste the full address the
 //! browser comes back to and the example checks it and exchanges the code; an
-//! empty line stops after the URL.
+//! empty line stops after the URL. The temporary connection is revoked after
+//! reading the workspace and user, including when either read fails.
 //!
 //! ```bash
 //! ASSINAFY_OAUTH_CLIENT_ID=my-client-id \
@@ -16,7 +17,10 @@
 
 use std::collections::HashMap;
 
-use assinafy::resources::{AuthorizationRequest, PkceChallenge, TokenRequest, scope};
+use assinafy::models::TokenResponse;
+use assinafy::resources::{
+    AuthorizationRequest, PkceChallenge, RevokeRequest, TokenRequest, scope,
+};
 use assinafy::{Auth, Client};
 
 /// The `iss` every Assinafy authorization response carries (RFC 9207).
@@ -59,7 +63,7 @@ async fn main() -> assinafy::Result<()> {
     let authorize_url = AuthorizationRequest::new(&client_id, &redirect_uri, &pkce)
         .scopes([
             scope::DOCUMENTS_READ,
-            scope::DOCUMENTS_WRITE,
+            scope::ACCOUNT_READ,
             scope::OPENID,
             scope::OFFLINE_ACCESS,
         ])
@@ -89,7 +93,8 @@ async fn main() -> assinafy::Result<()> {
     //    repeating the `resource` sent in step 2.
     let mut request = TokenRequest::authorization_code(&client_id, code, &redirect_uri, &pkce)
         .resource(&resource.resource);
-    if let Ok(secret) = std::env::var("ASSINAFY_OAUTH_CLIENT_SECRET") {
+    let secret = std::env::var("ASSINAFY_OAUTH_CLIENT_SECRET").ok();
+    if let Some(secret) = &secret {
         request = request.client_secret(secret);
     }
     let token = client.oauth().token(&request).await?;
@@ -100,18 +105,39 @@ async fn main() -> assinafy::Result<()> {
     println!("expires in          : {:?}s", token.expires_in);
     println!("refreshable         : {}", token.refresh_token.is_some());
 
-    // 5. Act as the user. The token replaces the client's credential; it is
-    //    never printed, only used. It reaches one workspace, the only one the
-    //    account list returns: store its id with the tokens.
-    let as_user = client.with_auth(Auth::Bearer(token.access_token.clone()));
-    let workspace = &as_user.accounts_api().list().await?[0].id;
-    println!("workspace           : {workspace}");
-    if token.has_scope(scope::OPENID) {
-        let who = as_user.oauth().userinfo().await?;
-        println!("acting for          : {} ({:?})", who.sub, who.name);
-    }
+    finish_connection(&client, &client_id, secret.as_deref(), &token).await
+}
 
-    Ok(())
+async fn finish_connection(
+    client: &Client,
+    client_id: &str,
+    secret: Option<&str>,
+    token: &TokenResponse,
+) -> assinafy::Result<()> {
+    // 5. Use the temporary token without printing it, then revoke it even if a read fails.
+    let workflow: assinafy::Result<()> = async {
+        let as_user = client.with_auth(Auth::Bearer(token.access_token.clone()));
+        let accounts = as_user.accounts_api().list().await?;
+        let workspace = accounts.first().ok_or_else(|| {
+            assinafy::Error::UnexpectedResponse("missing authorized workspace".into())
+        })?;
+        println!("workspace           : {}", workspace.id);
+        if token.has_scope(scope::OPENID) {
+            let who = as_user.oauth().userinfo().await?;
+            println!("acting for          : {} ({:?})", who.sub, who.name);
+        }
+        Ok(())
+    }
+    .await;
+    let mut revoke = match &token.refresh_token {
+        Some(refresh) => RevokeRequest::refresh_token(client_id, refresh),
+        None => RevokeRequest::access_token(client_id, &token.access_token),
+    };
+    if let Some(secret) = secret {
+        revoke = revoke.client_secret(secret);
+    }
+    client.oauth().revoke(&revoke).await?;
+    workflow
 }
 
 fn callback_parameters(
@@ -172,5 +198,101 @@ mod tests {
             callback_parameters(&denied, base, "expected").unwrap()["error"],
             "access_denied"
         );
+    }
+
+    #[tokio::test]
+    async fn read_failures_and_empty_workspace_still_revoke_the_current_token() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+
+        let failure = (503, r#"{"message":"temporarily unavailable"}"#);
+        let empty = (200, r#"{"status":200,"data":[]}"#);
+        let account = (
+            200,
+            r#"{"status":200,"data":[{"id":"account-id","name":"Example Workspace"}]}"#,
+        );
+        for (responses, refresh) in [
+            (vec![failure], Some("sentinel-refresh")),
+            (vec![empty], None),
+            (vec![account, failure], Some("sentinel-refresh")),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let mut requests = Vec::new();
+                for (status, response) in responses.into_iter().chain([(200, "")]) {
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(
+                                    Instant::now() < deadline,
+                                    "expected API request was not sent"
+                                );
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(error) => panic!("{error}"),
+                        }
+                    };
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut reader = BufReader::new(&stream);
+                    let mut headers = String::new();
+                    let mut len = 0;
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line).unwrap();
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            len = value.trim().parse().unwrap();
+                        }
+                        headers.push_str(&line);
+                    }
+                    let mut body = vec![0; len];
+                    reader.read_exact(&mut body).unwrap();
+                    requests.push((headers, body));
+                    write!(stream, "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+                }
+                requests
+            });
+            let client = Client::builder()
+                .base_url(assinafy::BaseUrl::custom(format!("http://{address}/v1")).unwrap())
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap();
+            let token: TokenResponse = serde_json::from_value(serde_json::json!({
+                "access_token":"sentinel-access", "refresh_token":refresh, "scope":"openid"
+            }))
+            .unwrap();
+            assert!(
+                finish_connection(&client, "client-id", Some("sentinel-secret"), &token)
+                    .await
+                    .is_err()
+            );
+            let requests = server.join().unwrap();
+            let (headers, body) = requests.last().unwrap();
+            assert!(headers.starts_with("POST /v1/oauth/revoke "));
+            assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+            let form: HashMap<_, _> = url::form_urlencoded::parse(body).into_owned().collect();
+            assert_eq!(form["token"], refresh.unwrap_or("sentinel-access"));
+            assert_eq!(
+                form["token_type_hint"],
+                if refresh.is_some() {
+                    "refresh_token"
+                } else {
+                    "access_token"
+                }
+            );
+            assert_eq!(form["client_secret"], "sentinel-secret");
+            assert_eq!(form["client_id"], "client-id");
+        }
     }
 }

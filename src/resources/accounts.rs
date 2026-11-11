@@ -548,6 +548,279 @@ impl<'a> AccountApi<'a> {
     }
 }
 
+/// Partial workspace event policy. Omitted keys remain unchanged.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateNotificationPolicyEvents {
+    #[serde(rename = "DocumentCompleted", skip_serializing_if = "Option::is_none")]
+    document_completed: Option<bool>,
+    #[serde(rename = "SignerDeclined", skip_serializing_if = "Option::is_none")]
+    signer_declined: Option<bool>,
+    #[serde(rename = "DocumentCancelled", skip_serializing_if = "Option::is_none")]
+    document_cancelled: Option<bool>,
+    #[serde(
+        rename = "DocumentAboutToExpire",
+        skip_serializing_if = "Option::is_none"
+    )]
+    document_about_to_expire: Option<bool>,
+    #[serde(rename = "DocumentExpired", skip_serializing_if = "Option::is_none")]
+    document_expired: Option<bool>,
+    #[serde(
+        rename = "DocumentExpirationReset",
+        skip_serializing_if = "Option::is_none"
+    )]
+    document_expiration_reset: Option<bool>,
+    #[serde(
+        rename = "DocumentProcessingFailed",
+        skip_serializing_if = "Option::is_none"
+    )]
+    document_processing_failed: Option<bool>,
+    #[serde(
+        rename = "TemplateProcessingFailed",
+        skip_serializing_if = "Option::is_none"
+    )]
+    template_processing_failed: Option<bool>,
+    #[serde(
+        rename = "SignerWhatsappFailed",
+        skip_serializing_if = "Option::is_none"
+    )]
+    signer_whatsapp_failed: Option<bool>,
+    #[serde(
+        rename = "ContractRenewalNotice",
+        skip_serializing_if = "Option::is_none"
+    )]
+    contract_renewal_notice: Option<bool>,
+    #[serde(rename = "ContractExpiring", skip_serializing_if = "Option::is_none")]
+    contract_expiring: Option<bool>,
+    #[serde(rename = "ContractExpired", skip_serializing_if = "Option::is_none")]
+    contract_expired: Option<bool>,
+    #[serde(rename = "ContractRenewed", skip_serializing_if = "Option::is_none")]
+    contract_renewed: Option<bool>,
+    #[serde(rename = "SignerViewed", skip_serializing_if = "Option::is_none")]
+    signer_viewed: Option<bool>,
+    #[serde(rename = "SignerSigned", skip_serializing_if = "Option::is_none")]
+    signer_signed: Option<bool>,
+    #[serde(
+        rename = "SignerIdentityReviewRequired",
+        skip_serializing_if = "Option::is_none"
+    )]
+    signer_identity_review_required: Option<bool>,
+}
+impl UpdateNotificationPolicyEvents {
+    /// Start an empty partial update.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Enable or disable DocumentCompleted.
+    pub fn document_completed(mut self, enabled: bool) -> Self {
+        self.document_completed = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerDeclined.
+    pub fn signer_declined(mut self, enabled: bool) -> Self {
+        self.signer_declined = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentCancelled.
+    pub fn document_cancelled(mut self, enabled: bool) -> Self {
+        self.document_cancelled = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentAboutToExpire.
+    pub fn document_about_to_expire(mut self, enabled: bool) -> Self {
+        self.document_about_to_expire = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentExpired.
+    pub fn document_expired(mut self, enabled: bool) -> Self {
+        self.document_expired = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentExpirationReset.
+    pub fn document_expiration_reset(mut self, enabled: bool) -> Self {
+        self.document_expiration_reset = Some(enabled);
+        self
+    }
+    /// Enable or disable DocumentProcessingFailed.
+    pub fn document_processing_failed(mut self, enabled: bool) -> Self {
+        self.document_processing_failed = Some(enabled);
+        self
+    }
+    /// Enable or disable TemplateProcessingFailed.
+    pub fn template_processing_failed(mut self, enabled: bool) -> Self {
+        self.template_processing_failed = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerWhatsappFailed.
+    pub fn signer_whatsapp_failed(mut self, enabled: bool) -> Self {
+        self.signer_whatsapp_failed = Some(enabled);
+        self
+    }
+    /// Enable or disable ContractRenewalNotice.
+    pub fn contract_renewal_notice(mut self, enabled: bool) -> Self {
+        self.contract_renewal_notice = Some(enabled);
+        self
+    }
+    /// Enable or disable ContractExpiring.
+    pub fn contract_expiring(mut self, enabled: bool) -> Self {
+        self.contract_expiring = Some(enabled);
+        self
+    }
+    /// Enable or disable ContractExpired.
+    pub fn contract_expired(mut self, enabled: bool) -> Self {
+        self.contract_expired = Some(enabled);
+        self
+    }
+    /// Enable or disable ContractRenewed.
+    pub fn contract_renewed(mut self, enabled: bool) -> Self {
+        self.contract_renewed = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerViewed.
+    pub fn signer_viewed(mut self, enabled: bool) -> Self {
+        self.signer_viewed = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerSigned.
+    pub fn signer_signed(mut self, enabled: bool) -> Self {
+        self.signer_signed = Some(enabled);
+        self
+    }
+    /// Enable or disable SignerIdentityReviewRequired.
+    pub fn signer_identity_review_required(mut self, enabled: bool) -> Self {
+        self.signer_identity_review_required = Some(enabled);
+        self
+    }
+    /// Whether no preference was supplied.
+    pub fn is_empty(&self) -> bool {
+        self.document_completed.is_none()
+            && self.signer_declined.is_none()
+            && self.document_cancelled.is_none()
+            && self.document_about_to_expire.is_none()
+            && self.document_expired.is_none()
+            && self.document_expiration_reset.is_none()
+            && self.document_processing_failed.is_none()
+            && self.template_processing_failed.is_none()
+            && self.signer_whatsapp_failed.is_none()
+            && self.contract_renewal_notice.is_none()
+            && self.contract_expiring.is_none()
+            && self.contract_expired.is_none()
+            && self.contract_renewed.is_none()
+            && self.signer_viewed.is_none()
+            && self.signer_signed.is_none()
+            && self.signer_identity_review_required.is_none()
+    }
+}
+
+/// Partial workspace notification policy; set events and/or the owner switch.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateNotificationPolicyBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    events: Option<UpdateNotificationPolicyEvents>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owners_receive_all: Option<bool>,
+}
+impl UpdateNotificationPolicyBody {
+    /// Start an empty partial update.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Change selected event rules.
+    pub fn events(mut self, events: UpdateNotificationPolicyEvents) -> Self {
+        self.events = Some(events);
+        self
+    }
+    /// Set whether owners receive all members' push alerts.
+    pub fn owners_receive_all(mut self, enabled: bool) -> Self {
+        self.owners_receive_all = Some(enabled);
+        self
+    }
+    /// Whether this update contains no effective changes.
+    pub fn is_empty(&self) -> bool {
+        self.owners_receive_all.is_none()
+            && self
+                .events
+                .as_ref()
+                .is_none_or(UpdateNotificationPolicyEvents::is_empty)
+    }
+}
+
+impl AccountApi<'_> {
+    /// Read account capabilities. Requires `account:read` for OAuth apps.
+    /// `GET /accounts/{account_id}?expand=signing_features`.
+    /// # Request payload
+    /// ```json
+    /// {"expand":"signing_features"}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"account-id","name":"Example Workspace","signing_features":{"DigitalCertificate":true,"VerificationIdDocumentFaceMatchBasic":false,"WhatsappNotification":true,"VerificationBypass":false,"Embed":false}}}
+    /// ```
+    pub async fn get_with_signing_features(&self) -> Result<Account> {
+        let path = self.http.path(&["accounts", &self.account_id])?;
+        let req = self
+            .http
+            .request(Method::GET, &path)?
+            .query(&[("expand", "signing_features")]);
+        self.http.send_envelope(req).await
+    }
+    /// Read workspace notification rules. Third-party OAuth apps receive `403`.
+    /// `GET /accounts/{account_id}/notification-policy`.
+    /// # Request payload
+    /// No request body or query parameters.
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"editable":true,"owners_receive_all":false,"events":{"SignerViewed":false}}}
+    /// ```
+    pub async fn notification_policy(&self) -> Result<crate::models::account::NotificationPolicy> {
+        let path = self
+            .http
+            .path(&["accounts", &self.account_id, "notification-policy"])?;
+        let req = self.http.request(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+    /// Update workspace notification rules. Only owners may write; third-party OAuth apps receive `403`.
+    /// `PUT /accounts/{account_id}/notification-policy`.
+    /// # Request payload
+    /// ```json
+    /// {"events":{"SignerViewed":false},"owners_receive_all":true}
+    /// ```
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"editable":true,"owners_receive_all":true,"events":{"SignerViewed":false}}}
+    /// ```
+    pub async fn update_notification_policy(
+        &self,
+        body: &UpdateNotificationPolicyBody,
+    ) -> Result<crate::models::account::NotificationPolicy> {
+        if body.is_empty() {
+            return Err(Error::Validation(
+                "notification policy update must not be empty".into(),
+            ));
+        }
+        let path = self
+            .http
+            .path(&["accounts", &self.account_id, "notification-policy"])?;
+        let req = self.http.request(Method::PUT, &path)?.json(body);
+        self.http.send_envelope(req).await
+    }
+}
+
+impl AccountApi<'_> {
+    /// Read plan usage without prices or payment information.
+    /// `GET /accounts/{account_id}/usage`. Third-party OAuth apps receive `403`.
+    /// # Request payload
+    /// No body or query parameters; the account identifier is supplied in the route.
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"plan":"Pro","documents_renewal_date":"2026-12-01","balances":{"documents":{"balance":100,"limit":100,"spent":0},"credits":{"balance":12.5,"limit":null,"spent":0.5}}}}
+    /// ```
+    pub async fn usage(&self) -> Result<crate::models::account::AccountUsage> {
+        let path = self.http.path(&["accounts", &self.account_id, "usage"])?;
+        let req = self.http.request(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

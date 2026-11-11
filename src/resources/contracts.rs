@@ -754,6 +754,31 @@ impl<'a> ContractsApi<'a> {
         self.http.send_envelope(request).await
     }
 
+    /// Read the contract family with its root document expanded.
+    ///
+    /// `GET /accounts/{account_id}/documents/{document_id}/contract/related`.
+    ///
+    /// # Request payload
+    ///
+    /// No body; query `expand=document`.
+    ///
+    /// # Response payload
+    ///
+    /// ```json
+    /// {"status":200,"message":"","data":{"resource":"document_contract","document_id":"root","status":"active","document":{"id":"root","name":"Contract.pdf","status":"certificated"},"amendments":[]}}
+    /// ```
+    pub async fn related_with_document<S: AsRef<str>>(
+        &self,
+        document_id: S,
+    ) -> Result<DocumentContract> {
+        let path = self.contract_path(document_id.as_ref(), &["related"])?;
+        let request = self
+            .http
+            .request(Method::GET, &path)?
+            .query(&[("expand", "document")]);
+        self.http.send_envelope(request).await
+    }
+
     /// Start the contract's next term.
     ///
     /// `POST /accounts/{account_id}/documents/{document_id}/contract/renew`.
