@@ -100,7 +100,11 @@ pub struct UpdateFieldBody {
     /// New validation regular expression. Use `Some(None)` to clear it.
     /// Must be a delimited regex literal (e.g. `"/^[A-Z]{3}$/"`) — see
     /// [`CreateFieldBody::regex`].
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::deserialize_nullable"
+    )]
     pub regex: Option<Option<String>>,
     /// Compatibility field for changing the required flag.
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -25,6 +25,7 @@ mod envelopes;
 mod fields;
 mod oauth;
 mod public;
+mod scheduled_sends;
 mod signer_self;
 mod signers;
 mod tags;
@@ -68,6 +69,7 @@ pub use oauth::{
     AuthorizationRequest, OAuthApi, PkceChallenge, RevokeRequest, TokenRequest, scope,
 };
 pub use public::{PublicApi, SendTokenBody, SendTokenResult};
+pub use scheduled_sends::{ListScheduledSendsRequest, ScheduledSendTime, ScheduledSendsApi};
 pub use signer_self::{
     ConfirmSignerDataBody, DeclineMultipleDocumentsBody, ListSignerDocumentsRequest,
     SignMultipleDocumentsBody, SignerSelfApi, VerifyCodeBody,
@@ -87,3 +89,14 @@ pub use webhooks::{
     ListWebhookDispatchesRequest, RegisterWebhookBody, WEBHOOK_TIMESTAMP_TOLERANCE,
     WebhookEndpointBody, WebhooksApi, verify_webhook_signature,
 };
+
+// Preserve explicit null separately from a missing partial-update field.
+fn deserialize_nullable<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(deserializer).map(Some)
+}

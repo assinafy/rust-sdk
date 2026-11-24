@@ -372,18 +372,12 @@ pub struct UpdateEnvelopeBody {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_message"
+        deserialize_with = "super::deserialize_nullable"
     )]
     pub message: Option<Option<String>>,
     /// Every current document ID, exactly once, in its new order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document_ids: Option<Vec<String>>,
-}
-
-fn deserialize_message<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 impl UpdateEnvelopeBody {
@@ -424,6 +418,64 @@ pub struct EnvelopesApi<'a> {
 }
 
 impl<'a> EnvelopesApi<'a> {
+    /// Schedule an envelope (`POST /accounts/{accountId}/scheduled-sends`).
+    /// Reuses creation validation without creating, charging or inviting now.
+    /// `send_at` must be one hour to 90 days ahead, with document expirations at
+    /// least two hours after it. No idempotency key is supported here: each call
+    /// creates one scheduled send. Requires `documents:write` for OAuth.
+    ///
+    /// # Request payload
+    /// ```json
+    /// {"name":"Contract","signers":[{"id":"signer_123"}],"documents":[{"id":"document_123","signer_ids":["signer_123"]}],"send_at":"2026-12-01T12:00:00Z"}
+    /// ```
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"resource":"scheduled_send","id":"scheduled_123","type":"envelope","document_ids":["document_123"],"status":"pending","send_at":"2026-12-01T12:00:00Z","assignment_id":null,"envelope_id":null,"failure_reason":null,"created_at":"2026-11-24T12:00:00Z","processed_at":null}}
+    /// ```
+    pub async fn schedule(
+        &self,
+        body: &CreateEnvelopeBody,
+        send_at: impl Into<super::ScheduledSendTime>,
+    ) -> Result<crate::models::ScheduledSend> {
+        body.validate()?;
+        validate_credit_ceiling(body.max_total_credits)?;
+        let mut payload = serde_json::to_value(body)?;
+        payload["send_at"] = serde_json::to_value(send_at.into())?;
+        let path = self
+            .http
+            .path(&["accounts", &self.account_id, "scheduled-sends"])?;
+        let req = self
+            .http
+            .request_workspace(Method::POST, &path)?
+            .json(&payload);
+        self.http.send_envelope(req).await
+    }
+
+    /// Estimate a reminder without sending or charging
+    /// (`POST /accounts/{accountId}/envelopes/{envelopeId}/signers/{signerId}/estimate-resend-cost`).
+    /// Costs one message per notification method, regardless of document count.
+    /// The estimate does not check the reminder cooldown or document state.
+    ///
+    /// # Request payload
+    /// No body or query parameters.
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"total":0,"breakdown":[],"credit_balance":10,"has_sufficient_credits":true}}
+    /// ```
+    pub async fn estimate_resend_cost(
+        &self,
+        envelope_id: &str,
+        signer_id: &str,
+    ) -> Result<CostEstimate> {
+        let req = self.http.request_workspace(
+            Method::POST,
+            &self.path(&[envelope_id, "signers", signer_id, "estimate-resend-cost"])?,
+        )?;
+        self.http.send_envelope(req).await
+    }
+
     pub(crate) fn new(http: &'a HttpClient, account_id: String) -> Self {
         Self { http, account_id }
     }

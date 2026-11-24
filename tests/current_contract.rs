@@ -259,3 +259,103 @@ async fn default_creation_options_preserve_existing_requests() {
         assert!(!request.headers.contains_key("idempotency-key"));
     }
 }
+
+#[tokio::test]
+async fn signer_confirmation_accepts_the_empty_list_response_and_sends_only_signer_auth() {
+    let (client, server) = mock(json!([]));
+    client
+        .with_auth(Auth::AccessCode("sentinel-code".into()))
+        .signer_self()
+        .confirm_data_only(
+            "document",
+            &assinafy::resources::ConfirmSignerDataBody::new()
+                .email("user@example.invalid")
+                .accepted_terms(true),
+        )
+        .await
+        .unwrap();
+    let request = server.join().unwrap();
+    assert_eq!(request.method, "PUT");
+    assert_eq!(
+        request.url.path(),
+        "/v1/documents/document/signers/confirm-data"
+    );
+    assert_eq!(
+        request.url.query_pairs().collect::<Vec<_>>(),
+        [("signer-access-code".into(), "sentinel-code".into())]
+    );
+    assert!(!request.headers.contains_key("authorization"));
+    assert!(!request.headers.contains_key("x-api-key"));
+    assert_eq!(
+        request.body,
+        json!({"email":"user@example.invalid","has_accepted_terms":true})
+    );
+}
+
+#[tokio::test]
+async fn confirmation_compatibility_method_reads_profile_after_confirming_once() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for (method, path, data) in [
+            (
+                "PUT",
+                "/v1/documents/document/signers/confirm-data",
+                json!([]),
+            ),
+            (
+                "GET",
+                "/v1/signers/self",
+                json!({"id":"signer","full_name":"Maria Silva","email":"user@example.invalid","has_accepted_terms":true}),
+            ),
+        ] {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(&stream);
+            let mut first = String::new();
+            reader.read_line(&mut first).unwrap();
+            assert!(first.starts_with(&format!(
+                "{method} {path}?signer-access-code=sentinel-code "
+            )));
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                assert!(!line.to_ascii_lowercase().starts_with("x-api-key:"));
+                assert!(!line.to_ascii_lowercase().starts_with("authorization:"));
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let response = json!({"status":200,"message":"","data":data}).to_string();
+            write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).unwrap();
+        }
+    });
+    let client = assinafy::Client::builder()
+        .base_url(assinafy::BaseUrl::custom(format!("http://{address}/v1")).unwrap())
+        .auth(Auth::AccessCode("sentinel-code".into()))
+        .build()
+        .unwrap();
+    let signer = client
+        .signer_self()
+        .confirm_data(
+            "document",
+            &assinafy::resources::ConfirmSignerDataBody::new()
+                .email("user@example.invalid")
+                .accepted_terms(true),
+        )
+        .await
+        .unwrap();
+    assert_eq!(signer.id, "signer");
+    assert!(signer.has_accepted_terms);
+    server.join().unwrap();
+}

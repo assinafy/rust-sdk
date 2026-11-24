@@ -60,32 +60,30 @@ impl VerifyCodeBody {
 ///
 /// # Request payload
 ///
-/// All fields are optional; send only the ones being confirmed/updated.
+/// Send the contact required by the signer's notification or verification method.
+/// An existing contact must match; an absent contact is saved.
 ///
 /// ```json
 /// {
-///   "full_name": "Maria Silva",
 ///   "email": "user@example.invalid",
-///   "government_id": "123.456.789-09"
+///   "has_accepted_terms": true
 /// }
 /// ```
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ConfirmSignerDataBody {
-    /// Confirmed/updated full name.
+    /// Legacy full-name extension; ignored by the current API.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_name: Option<String>,
     /// Confirmed/updated email.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    /// Confirmed/updated government ID (CPF/CNPJ). This is the field the
-    /// documented confirm-data body expects.
+    /// Legacy government-ID extension; ignored by the current API.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub government_id: Option<String>,
-    /// Legacy extension for the WhatsApp phone number.
+    /// Contact required for WhatsApp notification or verification.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_phone_number: Option<String>,
-    /// Legacy extension for accepting terms during confirmation. The current
-    /// API exposes [`SignerSelfApi::accept_terms`] separately.
+    /// Record terms acceptance during confirmation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_accepted_terms: Option<bool>,
     /// Legacy extension for an inline verification code.
@@ -105,29 +103,25 @@ impl ConfirmSignerDataBody {
         self
     }
 
-    /// Set the signer full name.
+    /// Set the legacy full-name extension (ignored by the current API).
     pub fn full_name<S: Into<String>>(mut self, full_name: S) -> Self {
         self.full_name = Some(full_name.into());
         self
     }
 
-    /// Set the signer government ID (CPF/CNPJ).
+    /// Set the legacy government-ID extension (ignored by the current API).
     pub fn government_id<S: Into<String>>(mut self, government_id: S) -> Self {
         self.government_id = Some(government_id.into());
         self
     }
 
-    /// Set the signer WhatsApp phone number for a legacy deployment.
-    ///
-    /// Outside the documented contract; sent only when set.
+    /// Set the signer WhatsApp phone number.
     pub fn whatsapp<S: Into<String>>(mut self, phone: S) -> Self {
         self.whatsapp_phone_number = Some(phone.into());
         self
     }
 
-    /// Accept or decline terms in this request for a legacy deployment.
-    ///
-    /// Outside the documented contract; sent only when set.
+    /// Record acceptance of the terms in this confirmation request.
     pub fn accepted_terms(mut self, accepted: bool) -> Self {
         self.has_accepted_terms = Some(accepted);
         self
@@ -484,7 +478,8 @@ impl<'a> SignerSelfApi<'a> {
     /// ```json
     /// {
     ///   "status": 200,
-    ///   "message": ""
+    ///   "message": "",
+    ///   "data": {"full_name":"Maria Silva","email":"user@example.invalid","has_accepted_terms":true}
     /// }
     /// ```
     pub async fn accept_terms(&self) -> Result<()> {
@@ -523,46 +518,69 @@ impl<'a> SignerSelfApi<'a> {
         self.http.send_no_content(req).await
     }
 
-    /// Confirm/update signer profile data within a specific document context.
+    /// Confirm contact data, then retrieve the signer profile.
     ///
-    /// `PUT /documents/{document_id}/signers/confirm-data`.
+    /// Calls [`Self::confirm_data_only`] (`PUT /documents/{documentId}/signers/confirm-data`)
+    /// followed by [`Self::me`] (`GET /signers/self`) to preserve the profile return value.
+    /// A failed profile read does not undo the successful confirmation. Use
+    /// `confirm_data_only` when the profile is not needed.
     ///
     /// # Request payload
-    ///
     /// ```json
-    /// {
-    ///   "full_name": "Maria Silva",
-    ///   "email": "user@example.invalid",
-    ///   "government_id": "123.456.789-09"
-    /// }
+    /// {"email":"user@example.invalid","has_accepted_terms":true}
     /// ```
+    /// The following profile read has no request body.
     ///
     /// # Response payload
-    ///
+    /// Confirmation returns:
     /// ```json
-    /// {
-    ///   "status": 200,
-    ///   "message": "",
-    ///   "data": {
-    ///     "resource": "signer",
-    ///     "id": "102d25a4a1b2c3d4e5f60718293a4b5c",
-    ///     "full_name": "Maria Silva",
-    ///     "email": "user@example.invalid",
-    ///     "whatsapp_phone_number": null,
-    ///     "has_accepted_terms": false
-    ///   }
-    /// }
+    /// {"status":200,"message":"","data":[]}
+    /// ```
+    /// The subsequent profile response supplies the returned signer:
+    /// ```json
+    /// {"status":200,"message":"","data":{"id":"signer_123","full_name":"Maria Silva","email":"user@example.invalid","has_accepted_terms":true}}
     /// ```
     pub async fn confirm_data<S: AsRef<str>>(
         &self,
         document_id: S,
         body: &ConfirmSignerDataBody,
     ) -> Result<Signer> {
+        self.confirm_data_only(document_id, body).await?;
+        let signer = self.me().await?;
+        Ok(Signer {
+            resource: signer.resource,
+            id: signer.id,
+            full_name: signer.full_name,
+            email: signer.email,
+            whatsapp_phone_number: signer.whatsapp_phone_number,
+            government_id: signer.government_id,
+            has_accepted_terms: signer.has_accepted_terms,
+        })
+    }
+
+    /// Confirm the contact required by the signer's methods, optionally accepting terms
+    /// (`PUT /documents/{documentId}/signers/confirm-data`). An existing contact must match.
+    /// Only email, WhatsApp phone number and terms acceptance are read by the API.
+    ///
+    /// # Request payload
+    /// ```json
+    /// {"email":"user@example.invalid","has_accepted_terms":true}
+    /// ```
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":[]}
+    /// ```
+    pub async fn confirm_data_only<S: AsRef<str>>(
+        &self,
+        document_id: S,
+        body: &ConfirmSignerDataBody,
+    ) -> Result<()> {
         let path =
             self.http
                 .path(&["documents", document_id.as_ref(), "signers", "confirm-data"])?;
         let req = self.http.request_signer(Method::PUT, &path)?.json(body);
-        self.http.send_envelope(req).await
+        self.http.send_no_content(req).await
     }
 
     /// Retrieve the full signable document for the current signer.

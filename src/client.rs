@@ -8,8 +8,8 @@ use crate::error::{Error, Result};
 use crate::http::{HttpClient, transport};
 use crate::resources::{
     AccountApi, AccountsApi, ActivitiesApi, ApiKeysApi, AssignmentsApi, AuthApi, ContractsApi,
-    DocumentsApi, EmbeddedSigningApi, EnvelopesApi, FieldsApi, OAuthApi, PublicApi, SignerSelfApi,
-    SignersApi, TagsApi, TemplatesApi, UsersApi, WebhooksApi,
+    DocumentsApi, EmbeddedSigningApi, EnvelopesApi, FieldsApi, OAuthApi, PublicApi,
+    ScheduledSendsApi, SignerSelfApi, SignersApi, TagsApi, TemplatesApi, UsersApi, WebhooksApi,
 };
 
 /// Default user-agent used by the SDK.
@@ -136,6 +136,11 @@ impl Client {
     /// Multi-document envelopes within a workspace.
     pub fn envelopes<S: Into<String>>(&self, account_id: S) -> EnvelopesApi<'_> {
         EnvelopesApi::new(&self.http, account_id.into())
+    }
+
+    /// List, cancel or execute scheduled assignment and envelope sends.
+    pub fn scheduled_sends<S: Into<String>>(&self, account_id: S) -> ScheduledSendsApi<'_> {
+        ScheduledSendsApi::new(&self.http, account_id.into())
     }
 
     /// Allowed iframe origins and single-use embedded signing sessions.

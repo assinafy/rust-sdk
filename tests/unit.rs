@@ -448,7 +448,7 @@ fn auth_request_builders_emit_documented_fields() {
 }
 
 #[test]
-fn signer_confirmation_builder_emits_documented_fields() {
+fn signer_confirmation_builder_preserves_legacy_identity_fields() {
     let json = serde_json::to_value(
         ConfirmSignerDataBody::new()
             .full_name("Maria Silva")
@@ -467,7 +467,7 @@ fn signer_confirmation_builder_emits_documented_fields() {
 }
 
 #[test]
-fn signer_confirmation_builder_can_emit_legacy_extensions() {
+fn signer_confirmation_builder_emits_contacts_terms_and_legacy_code() {
     let json = serde_json::to_value(
         ConfirmSignerDataBody::new()
             .whatsapp("+5548999990000")
@@ -646,7 +646,7 @@ fn assignment_body_omits_undocumented_top_level_methods() {
 fn account_decodes_list_and_by_id_shapes() {
     use assinafy::models::Account;
     // List shape: roles + is_delete_allowed, no colors.
-    let list = r#"{"resource":"account","id":"acc1","name":"MT","notification_sender_type":"User","roles":["owner"],"is_delete_allowed":true,"created_at":"2026-05-12T18:05:11Z"}"#;
+    let list = r#"{"resource":"account","id":"acc1","name":"Example Workspace","notification_sender_type":"User","roles":["owner"],"is_delete_allowed":true,"created_at":"2026-05-12T18:05:11Z"}"#;
     let a: Account = serde_json::from_str(list).unwrap();
     assert_eq!(a.id, "acc1");
     assert_eq!(a.roles, vec!["owner".to_string()]);
@@ -658,7 +658,7 @@ fn account_decodes_list_and_by_id_shapes() {
     );
 
     // By-id shape: colors present (possibly null), no roles.
-    let by_id = r#"{"id":"acc1","name":"MT","primary_color":"2072b9","secondary_color":null,"limits":{"webhook_endpoints":3},"created_at":"2026-05-12T18:05:11Z"}"#;
+    let by_id = r#"{"id":"acc1","name":"Example Workspace","primary_color":"2072b9","secondary_color":null,"limits":{"webhook_endpoints":3},"created_at":"2026-05-12T18:05:11Z"}"#;
     let a: Account = serde_json::from_str(by_id).unwrap();
     assert_eq!(a.primary_color.as_deref(), Some("2072b9"));
     assert_eq!(a.secondary_color, None);
@@ -703,10 +703,9 @@ fn contract_notification_preferences_are_typed_and_partial_updates_are_sparse() 
 #[test]
 fn account_theme_decodes_live_shape() {
     use assinafy::models::AccountTheme;
-    let body =
-        r#"{"account_name":"MT","primary_color":"2072b9","secondary_color":"ffffff","logo":null}"#;
+    let body = r#"{"account_name":"Example Workspace","primary_color":"2072b9","secondary_color":"ffffff","logo":null}"#;
     let t: AccountTheme = serde_json::from_str(body).unwrap();
-    assert_eq!(t.account_name.as_deref(), Some("MT"));
+    assert_eq!(t.account_name.as_deref(), Some("Example Workspace"));
     assert_eq!(t.primary_color.as_deref(), Some("2072b9"));
     assert_eq!(t.logo, None);
 }
@@ -826,7 +825,6 @@ fn template_document_body_serializes_only_documented_fields() {
 fn cost_estimate_decodes_live_shape_and_breakdown() {
     use assinafy::models::{BlockingReason, CostEstimate};
 
-    // Exact body returned live by POST /documents/{id}/assignments/estimate-cost.
     let live = r#"{"documents":1,"credits":0,"needs_extra_document":false,
         "extra_document_cost":0,"total_credits":0,"breakdown":[],
         "document_balance":42,"credit_balance":0,"has_sufficient_resources":true,
@@ -892,12 +890,11 @@ fn activity_decodes_hyphenated_and_underscored_user_agent() {
 fn self_user_decodes_live_users_self_shape() {
     use assinafy::models::SelfUser;
 
-    // Exact body returned live by GET /users/self.
-    let live = r#"{"user":{"id":"md3j6p9w8b7y6qvqaoy5er42","name":"Multica Test",
+    let live = r#"{"user":{"id":"user-id","name":"Example User",
         "email":"user@example.invalid","telephone":null,"government_id":"",
         "is_email_verified":true,"has_accepted_terms":true,"is_password_set":true,
         "created_at":"2026-05-12T18:05:11Z","to_be_deleted_at":null},
-        "accounts":[{"id":"acc_1234567890abcdef12345678","name":"MT","roles":["owner"],
+        "accounts":[{"id":"acc_1234567890abcdef12345678","name":"Example Workspace","roles":["owner"],
         "is_delete_allowed":true,"created_at":"2026-05-12T18:05:11Z"}]}"#;
     let me: SelfUser = serde_json::from_str(live).unwrap();
     assert_eq!(me.user.email, "user@example.invalid");
@@ -1102,4 +1099,57 @@ fn signer_models_decode_government_id() {
             "government_id": "123.456.789-09"
         })
     );
+}
+
+#[test]
+fn nullable_request_fields_preserve_explicit_null_when_decoded() {
+    use assinafy::resources::{CreateTagBody, UpdateFieldBody, UpdateTagBody};
+    for value in [
+        serde_json::json!({}),
+        serde_json::json!({"color":null}),
+        serde_json::json!({"color":"ff8800"}),
+    ] {
+        let body: UpdateTagBody = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(body).unwrap(), value);
+    }
+    let body: CreateTagBody =
+        serde_json::from_value(serde_json::json!({"name":"Contract","color":null})).unwrap();
+    assert_eq!(
+        serde_json::to_value(body).unwrap(),
+        serde_json::json!({"name":"Contract","color":null})
+    );
+    for value in [
+        serde_json::json!({}),
+        serde_json::json!({"regex":null}),
+        serde_json::json!({"regex":"/^.{2,}$/"}),
+    ] {
+        let body: UpdateFieldBody = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(body).unwrap(), value);
+    }
+}
+
+#[tokio::test]
+async fn nonfinite_contract_values_cannot_silently_clear_existing_values() {
+    use assinafy::Error;
+    use assinafy::resources::{RenewContractBody, UpdateContractBody};
+    let client = Client::builder()
+        .base_url(BaseUrl::custom("http://127.0.0.1:1/v1").unwrap())
+        .build()
+        .unwrap();
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(matches!(
+            client
+                .contracts("account")
+                .update("document", &UpdateContractBody::new().value(value))
+                .await,
+            Err(Error::Validation(_))
+        ));
+        assert!(matches!(
+            client
+                .contracts("account")
+                .renew("document", &RenewContractBody::from_term(1).value(value))
+                .await,
+            Err(Error::Validation(_))
+        ));
+    }
 }

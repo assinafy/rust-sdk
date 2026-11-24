@@ -13,7 +13,7 @@ Suporta Rust 1.86+ e edition 2024. Rust não possui canal LTS; o CI testa o MSRV
 
 ```toml
 [dependencies]
-assinafy = "3.10"
+assinafy = "3.11"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 ```
 
@@ -42,14 +42,14 @@ async fn main() -> assinafy::Result<()> {
 }
 ```
 
-Crie um único `Client` clonável e use seus recursos: `accounts_api`, `account`, `api_keys`, `users`, `signers`, `signer_self`, `documents`, `envelopes`, `embedded_signing`, `assignments`, `contracts`, `tags`, `fields`, `templates`, `webhooks`, `activities`, `public`, `auth_api` e `oauth`. As chamadas retornam `assinafy::Result<T>` e extraem o `data` do envelope `{status,message,data}`; metadados e tokens OAuth são planos.
+Crie um único `Client` clonável e use seus recursos: `accounts_api`, `account`, `api_keys`, `users`, `signers`, `signer_self`, `documents`, `envelopes`, `scheduled_sends`, `embedded_signing`, `assignments`, `contracts`, `tags`, `fields`, `templates`, `webhooks`, `activities`, `public`, `auth_api` e `oauth`. As chamadas retornam `assinafy::Result<T>` e extraem o `data` do envelope `{status,message,data}`; metadados e tokens OAuth são planos.
 
 ## Autenticação e ambientes
 
 - `Auth::ApiKey` / `ClientBuilder::api_key`: `X-Api-Key`, para integrações servidor-servidor.
 - `Auth::Bearer`: token de usuário ou OAuth em `Authorization`.
 - `Auth::AccessToken`: formato legado `?access-token=`.
-- `Auth::AccessCode`: somente rotas do signatário, como `?signer-access-code=`. Não pode ser obtido programaticamente.
+- `Auth::AccessCode`: somente rotas do signatário, como `?signer-access-code=`. Fornecido pelo fluxo de assinatura, incluindo a troca da sessão incorporada hospedada.
 
 Produção é o padrão. Para sandbox, use `BaseUrl::custom("https://sandbox.assinafy.com.br/v1")`. URLs personalizadas fora de loopback devem ser HTTPS e não podem conter credenciais, query ou fragmento. Segredos e URLs privadas de download/captura são ocultados em `Debug`.
 
@@ -75,7 +75,7 @@ Token e revogação usam form encoding, não seguem redirects e são enviados um
 3. Consulte `documents().get(...)` com prazo máximo até `metadata_ready`; persista IDs para retomar recursos existentes.
 4. Adicione tags por **nome**, posicione campos e chame `assignments().estimate_cost(...)`.
 5. Crie assignment `Virtual` ou `Collect`. Não repita criação de documento ou assignment após resposta incerta.
-6. Entregue cada URL privada. O signatário aceita termos, confirma dados, conclui a verificação, preenche seus itens e assina.
+6. Entregue cada URL privada. O signatário confirma o contato email/WhatsApp exigido com `confirm_data_only(...)`, registra a aceitação dos termos, conclui a verificação, preenche seus itens e assina. `confirm_data(...)` também consulta o perfil depois.
 7. Aguarde webhook verificado ou polling limitado; baixe `ArtifactName::Certificated`, `Pades`, `CertificatePage` ou `Bundle`.
 
 Pares permitidos de verificação/notificação:
@@ -99,9 +99,9 @@ A conclusão A1/A3 exige o certificado do próprio signatário e a extensão Web
 
 ## Templates, contratos e webhooks
 
-A criação por template aceita IDs existentes ou contatos inline com `TemplateDocumentSigner::from_email(role, email, name)`. `estimate_cost` projeta apenas campos de preço. CRUD/download de página de templates permanece como compatibilidade porque funciona ao vivo apesar de ausente no OpenAPI.
+A criação por template aceita IDs existentes ou contatos inline com `TemplateDocumentSigner::from_email(role, email, name)`. `estimate_cost` projeta apenas campos de preço. CRUD e download de página de templates continuam disponíveis pelos métodos de compatibilidade.
 
-`contracts(account)` cobre listar, ler/atualizar, família relacionada, renovar e encerrar. Campos anuláveis diferenciam omitido/valor/JSON `null`; envie o último `updated_at` para concorrência otimista. Nunca repita writes automaticamente. Writes podem depender do plano mesmo quando reads funcionam.
+`contracts(account)` cobre listar, ler/atualizar, família relacionada, renovar e encerrar. Campos anuláveis diferenciam omitido/valor/JSON `null`; envie o último `updated_at` para concorrência otimista. Valores do contrato devem ser finitos; use `clear_value()` para enviar null. Configure ao menos um campo na atualização. Nunca repita writes automaticamente; o acesso depende das permissões e da disponibilidade da assinatura da conta.
 
 Para webhooks assinados, crie endpoint com `signing_enabled(true)`, criptografe o `secret` retornado uma única vez e verifique o corpo **bruto** antes de parsear com `verify_webhook_signature`. Rejeite IDs de webhook repetidos no armazenamento da aplicação. Apps OAuth não podem ler um segredo existente, mas podem rotacioná-lo com `webhooks:write`. `rotate_endpoint_secret_with_overlap(id, true)` mantém a chave anterior por 24 horas; armazene a nova chave antes de trocar a verificação. Nunca altere endpoint existente para testar.
 
@@ -114,6 +114,12 @@ Opções de criação de assignment/template e corpos de envelope aceitam `max_t
 Para assinatura incorporada, configure origens exatas com `embedded_signing()`, marque o signatário de assignment/template como embedded, crie uma sessão curta e carregue sua URL no iframe. A troca é de uso único, inclusive em falha: nunca a repita. Mantenha URL e código de acesso privados; signatários embedded continuam recebendo o convite normal. Iframes aceitam verificação Email/Whatsapp; biometria e certificado usam o fluxo de assinatura hospedado.
 
 Proprietários configuram `account(id).update_notification_policy(...)`; usuários definem preferências de email e push separadamente. Clientes do signatário podem carregar `theme()`/`download_logo()` e solicitar cópia certificada; links expirados devem ser renovados pela operação de reenvio.
+
+## Envios agendados, qualificação e observadores
+
+Use `assignments().schedule(document, body, options, send_at)` ou `envelopes(account).schedule(body, send_at)` para enviar entre uma hora e 90 dias depois. Essas rotas exigem suporte no ambiente. Expirações devem ocorrer pelo menos duas horas após o envio agendado. A criação guarda a requisição sem cobrar; a execução verifica permissões, preços e saldos atuais. Guarde o ID retornado, liste por `scheduled_sends(account)` e use `cancel(id)` ou `send_now(id)` enquanto pendente. Agendamento não aceita chave de idempotência; nunca repita criação incerta. Uma recusa de envio imediato mantém o agendamento pendente.
+
+Use `AssignmentCreateOptions::sign_as(signer, SignerCapacity::Witness)` para qualificação na página de certificação, passe as mesmas opções a `estimate_cost_with_options` e consulte `documents().signer_capacities(document)`. `set_watchers(document, ids)` substitui até dez contatos com email; uma lista vazia remove todos. Observadores recebem emails de resultado sem anexos e exigem credenciais da conta que não sejam OAuth. `notification_history(document)` inclui datas de entrega/abertura; `envelopes(account).estimate_resend_cost(envelope, signer)` estima um lembrete sem enviá-lo.
 
 ## Queries, erros e compatibilidade
 

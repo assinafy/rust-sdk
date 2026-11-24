@@ -4,6 +4,24 @@ All notable changes to the `assinafy` crate are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the crate adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [3.11.0] - 2026-11-24
+
+### Added
+
+- Scheduled assignment and envelope sends, with paged history, cancellation and immediate execution.
+- Signer capacities on assignment creation and estimates, plus document capacity reads.
+- Document watchers, notification delivery/open history and envelope reminder estimates.
+- `confirm_data_only` for signer contact confirmation without a profile read.
+
+### Fixed
+
+- Signer confirmation accepts the API's empty response; `confirm_data` obtains its existing
+  profile return value through a subsequent signer read.
+- Deserializing nullable tag colors and field regular expressions preserves explicit JSON null.
+- Contract updates and renewals reject nonfinite values instead of clearing stored amounts.
+- WhatsApp button URLs containing signer credentials are redacted from `Debug`.
+- Updated URL parsing and locked dependencies with security and maintenance fixes.
+
 ## [3.10.1] - 2026-11-11
 
 ### Changed

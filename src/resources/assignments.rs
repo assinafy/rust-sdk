@@ -1,5 +1,7 @@
 //! Assignment (signature-request) endpoints.
 
+use std::collections::BTreeMap;
+
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +9,8 @@ use crate::error::{Error, Result};
 use crate::http::HttpClient;
 use crate::models::{
     Assignment, AssignmentMethod, CostEstimate, NotificationMethod, ResendNotificationResult,
-    SignDocumentItem, SignerIdentityReview, VerificationMethod, WhatsAppNotification,
+    ScheduledSend, SignDocumentItem, SignerCapacity, SignerIdentityReview, VerificationMethod,
+    WhatsAppNotification,
 };
 use crate::pagination::Page;
 
@@ -113,9 +116,18 @@ pub struct AssignmentCreateOptions {
     pub max_total_credits: Option<f64>,
     /// IDs of signers that should use embedded signing sessions.
     pub embedded_signer_ids: Vec<String>,
+    /// Capacities keyed by signer ID; omitted signers use plain signing.
+    pub signer_capacities: BTreeMap<String, SignerCapacity>,
 }
 
 impl AssignmentCreateOptions {
+    /// Designate a signer's capacity on the certificate page.
+    /// Replaces any previous capacity configured for this signer.
+    pub fn sign_as(mut self, id: impl Into<String>, capacity: SignerCapacity) -> Self {
+        self.signer_capacities.insert(id.into(), capacity);
+        self
+    }
+
     /// Set a finite, nonnegative spending ceiling.
     pub fn max_total_credits(mut self, credits: f64) -> Self {
         self.max_total_credits = Some(credits);
@@ -296,6 +308,51 @@ impl CreateAssignmentBody {
         self.copy_receiver_ids = ids.into_iter().map(Into::into).collect();
         self
     }
+}
+
+fn assignment_payload(
+    body: &CreateAssignmentBody,
+    options: &AssignmentCreateOptions,
+) -> Result<serde_json::Value> {
+    validate_create_assignment(body)?;
+    validate_credit_ceiling(options.max_total_credits)?;
+    let mut payload = serde_json::to_value(body)?;
+    if let Some(ceiling) = options.max_total_credits {
+        payload["max_total_credits"] = serde_json::json!(ceiling);
+    }
+    for id in &options.embedded_signer_ids {
+        let signer = payload["signers"]
+            .as_array_mut()
+            .and_then(|signers| {
+                signers
+                    .iter_mut()
+                    .find(|signer| signer["id"].as_str() == Some(id))
+            })
+            .ok_or_else(|| {
+                Error::Validation("embedded signer must be present in signers".into())
+            })?;
+        signer["embedded"] = serde_json::json!(true);
+    }
+    apply_signer_capacities(&mut payload, body, options)?;
+    Ok(payload)
+}
+
+fn apply_signer_capacities(
+    payload: &mut serde_json::Value,
+    body: &CreateAssignmentBody,
+    options: &AssignmentCreateOptions,
+) -> Result<()> {
+    for (id, capacity) in &options.signer_capacities {
+        let index = body
+            .signers
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .position(|signer| &signer.id == id)
+            .ok_or_else(|| Error::Validation("sign_as signer must be present in signers".into()))?;
+        payload["signers"][index]["sign_as"] = serde_json::to_value(capacity)?;
+    }
+    Ok(())
 }
 
 fn validate_create_assignment(body: &CreateAssignmentBody) -> Result<()> {
@@ -657,25 +714,7 @@ impl<'a> AssignmentsApi<'a> {
         body: &CreateAssignmentBody,
         options: &AssignmentCreateOptions,
     ) -> Result<Assignment> {
-        validate_create_assignment(body)?;
-        validate_credit_ceiling(options.max_total_credits)?;
-        let mut payload = serde_json::to_value(body)?;
-        if let Some(ceiling) = options.max_total_credits {
-            payload["max_total_credits"] = serde_json::json!(ceiling);
-        }
-        for id in &options.embedded_signer_ids {
-            let signer = payload["signers"]
-                .as_array_mut()
-                .and_then(|signers| {
-                    signers
-                        .iter_mut()
-                        .find(|signer| signer["id"].as_str() == Some(id))
-                })
-                .ok_or_else(|| {
-                    Error::Validation("embedded signer must be present in signers".into())
-                })?;
-            signer["embedded"] = serde_json::json!(true);
-        }
+        let payload = assignment_payload(body, options)?;
         let path = self
             .http
             .path(&["documents", document_id.as_ref(), "assignments"])?;
@@ -715,6 +754,30 @@ impl<'a> AssignmentsApi<'a> {
         document_id: S,
         body: &EstimateAssignmentCostBody,
     ) -> Result<CostEstimate> {
+        self.estimate_cost_with_options(document_id, body, &AssignmentCreateOptions::default())
+            .await
+    }
+
+    /// Estimate an assignment with signer capacities
+    /// (`POST /documents/{documentId}/assignments/estimate-cost`).
+    /// Capacities are checked by the API but do not affect price. Creation-only
+    /// embedded flags and credit ceilings are omitted.
+    ///
+    /// # Request payload
+    /// ```json
+    /// {"method":"virtual","signers":[{"sign_as":"Witness","verification_method":"Email","notification_methods":["Email"]}]}
+    /// ```
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"documents":1,"credits":0,"needs_extra_document":false,"extra_document_cost":1,"total_credits":0,"breakdown":[],"document_balance":10,"credit_balance":10,"has_sufficient_resources":true,"blocking_reason":null,"message":null}}
+    /// ```
+    pub async fn estimate_cost_with_options<S: AsRef<str>>(
+        &self,
+        document_id: S,
+        body: &EstimateAssignmentCostBody,
+        options: &AssignmentCreateOptions,
+    ) -> Result<CostEstimate> {
         validate_digital_certificate_method(body)?;
         let path = self.http.path(&[
             "documents",
@@ -729,6 +792,8 @@ impl<'a> AssignmentsApi<'a> {
                 "at least one signer is required for a cost estimate".into(),
             ));
         }
+        let mut payload = serde_json::to_value(payload)?;
+        apply_signer_capacities(&mut payload, body, options)?;
         let req = self.http.request(Method::POST, &path)?.json(&payload);
         self.http.send_envelope(req).await
     }
@@ -894,7 +959,7 @@ impl<'a> AssignmentsApi<'a> {
     ///
     /// ```json
     /// { "status": 200, "message": "", "data": [
-    ///   { "sent_at": 1710000000,
+    ///   { "sent_at": "2026-11-24T12:00:00Z",
     ///     "header": "Documento para assinatura: Contrato de Servico",
     ///     "body": "Olá, você tem um documento para assinar.",
     ///     "buttons": [ { "text": "Abrir documento",
@@ -915,6 +980,41 @@ impl<'a> AssignmentsApi<'a> {
             "whatsapp-notifications",
         ])?;
         let req = self.http.request(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+
+    /// Schedule an assignment (`POST /documents/{documentId}/scheduled-sends`).
+    /// Nothing is charged or sent now. The API requires `send_at` one hour to
+    /// 90 days ahead and any expiration at least two hours after it. One pending
+    /// send is allowed per document. Poll `Client::scheduled_sends` for its result;
+    /// a background failure records a reason and notifies the scheduling member.
+    /// Requires `documents:write` with OAuth. Never automatically retry creation.
+    ///
+    /// # Request payload
+    /// ```json
+    /// {"send_at":"2026-12-01T12:00:00Z","method":"virtual","signers":[{"id":"signer_123","sign_as":"Witness"}],"max_total_credits":0}
+    /// ```
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":{"resource":"scheduled_send","id":"scheduled_123","type":"assignment","document_ids":["document_123"],"status":"pending","send_at":"2026-12-01T12:00:00Z","assignment_id":null,"envelope_id":null,"failure_reason":null,"created_at":"2026-11-24T12:00:00Z","processed_at":null}}
+    /// ```
+    pub async fn schedule(
+        &self,
+        document_id: &str,
+        body: &CreateAssignmentBody,
+        options: &AssignmentCreateOptions,
+        send_at: impl Into<super::ScheduledSendTime>,
+    ) -> Result<ScheduledSend> {
+        let mut payload = assignment_payload(body, options)?;
+        payload["send_at"] = serde_json::to_value(send_at.into())?;
+        let path = self
+            .http
+            .path(&["documents", document_id, "scheduled-sends"])?;
+        let req = self
+            .http
+            .request_workspace(Method::POST, &path)?
+            .json(&payload);
         self.http.send_envelope(req).await
     }
 

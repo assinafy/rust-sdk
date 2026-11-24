@@ -8,7 +8,10 @@ use reqwest::multipart::{Form, Part};
 
 use crate::error::{Error, Result};
 use crate::http::HttpClient;
-use crate::models::{ArtifactName, Document, DocumentStatusInfo, DocumentVerification};
+use crate::models::{
+    ArtifactName, Document, DocumentSignerCapacity, DocumentStatusInfo, DocumentVerification,
+    Signer, SignerNotificationHistory,
+};
 use crate::pagination::Page;
 
 /// Builder for `GET /accounts/{account_id}/documents`.
@@ -240,6 +243,98 @@ impl<'a> DocumentsApi<'a> {
         Self { http }
     }
 
+    /// Read signer capacities (`GET /documents/{documentId}/signer-capacities`).
+    /// Requires a workspace credential and `documents:read` for OAuth.
+    /// Returns an empty list before the document is assigned.
+    ///
+    /// # Request payload
+    /// No body or query parameters.
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":[{"signer_id":"signer_123","sign_as":"Witness"}]}
+    /// ```
+    pub async fn signer_capacities(
+        &self,
+        document_id: &str,
+    ) -> Result<Vec<DocumentSignerCapacity>> {
+        let path = self
+            .http
+            .path(&["documents", document_id, "signer-capacities"])?;
+        let req = self.http.request_workspace(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+
+    /// Read delivery/open times (`GET /documents/{documentId}/notification-history`).
+    /// Requires a workspace credential and `documents:read` for OAuth.
+    /// Open timestamps are hints: link scanners can open mail before the recipient.
+    ///
+    /// # Request payload
+    /// No body or query parameters.
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":[{"signer_id":"signer_123","notification_history":[{"event":"signature_request","status":"delivered","error_code":null,"error_message":null,"sent_at":"2026-11-24T12:00:00Z","failed_at":null,"delivered_at":"2026-11-24T12:00:05Z","opened_at":null}]}]}
+    /// ```
+    pub async fn notification_history(
+        &self,
+        document_id: &str,
+    ) -> Result<Vec<SignerNotificationHistory>> {
+        let path = self
+            .http
+            .path(&["documents", document_id, "notification-history"])?;
+        let req = self.http.request_workspace(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+
+    /// Read watchers (`GET /documents/{documentId}/watchers`).
+    /// Deleted contacts are omitted. OAuth application tokens cannot use this route.
+    ///
+    /// # Request payload
+    /// No body or query parameters.
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":[{"id":"signer_123","full_name":"Maria Silva","email":"user@example.invalid","whatsapp_phone_number":null,"government_id":null,"has_accepted_terms":false}]}
+    /// ```
+    pub async fn watchers(&self, document_id: &str) -> Result<Vec<Signer>> {
+        let path = self.http.path(&["documents", document_id, "watchers"])?;
+        let req = self.http.request_workspace(Method::GET, &path)?;
+        self.http.send_envelope(req).await
+    }
+
+    /// Replace watchers (`PUT /documents/{documentId}/watchers`).
+    /// Up to ten workspace contacts with email addresses receive an outcome email
+    /// without a link or attachment. An empty list clears them. Closed documents
+    /// and OAuth application tokens are refused by the API.
+    ///
+    /// # Request payload
+    /// ```json
+    /// {"watcher_ids":["signer_123"]}
+    /// ```
+    ///
+    /// # Response payload
+    /// ```json
+    /// {"status":200,"message":"","data":[{"id":"signer_123","full_name":"Maria Silva","email":"user@example.invalid","whatsapp_phone_number":null,"government_id":null,"has_accepted_terms":false}]}
+    /// ```
+    pub async fn set_watchers(
+        &self,
+        document_id: &str,
+        watcher_ids: &[String],
+    ) -> Result<Vec<Signer>> {
+        if watcher_ids.len() > 10 || watcher_ids.iter().any(|id| id.trim().is_empty()) {
+            return Err(Error::Validation(
+                "watcher_ids requires at most ten non-empty contact IDs".into(),
+            ));
+        }
+        let path = self.http.path(&["documents", document_id, "watchers"])?;
+        let req = self
+            .http
+            .request_workspace(Method::PUT, &path)?
+            .json(&serde_json::json!({"watcher_ids":watcher_ids}));
+        self.http.send_envelope(req).await
+    }
+
     /// List all known document statuses.
     ///
     /// `GET /documents/statuses`.
@@ -409,7 +504,7 @@ impl<'a> DocumentsApi<'a> {
     ///   "artifacts": {
     ///     "original": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/download/original",
     ///     "thumbnail": "https://api.example.invalid/v1/documents/103acccd24234c07858ffddf6d84/thumbnail" },
-    ///   "is_closed": false, "signing_url": null,
+    ///   "is_closed": false,
     ///   "verification_code": null, "verification_url": null,
     ///   "has_contract": true, "tags": [], "assignment": null,
     ///   "pages": [ { "id": "103acccd7080eeee6abb709dfa0e", "number": 1, "width": 1275, "height": 1651,

@@ -512,6 +512,12 @@ impl<'a> ListContractsRequest<'a> {
     ///       "auto_renew": true,
     ///       "term": 1,
     ///       "external_references": [],
+    ///       "counterparty_taxpayer_id": null,
+    ///       "start_date": null,
+    ///       "renewal_term_months": 12,
+    ///       "notice_period_days": null,
+    ///       "owner_id": null,
+    ///       "metadata": null,
     ///       "created_at": "2026-10-23T12:00:00Z",
     ///       "updated_at": "2026-10-23T12:00:00Z"
     ///     }
@@ -647,7 +653,12 @@ impl<'a> ContractsApi<'a> {
     ///     "external_references": [],
     ///     "amendments": [],
     ///     "created_at": "2026-10-23T12:00:00Z",
-    ///     "updated_at": "2026-10-23T12:00:00Z"
+    ///     "updated_at": "2026-10-23T12:00:00Z",
+    ///     "counterparty_taxpayer_id": null,
+    ///     "renewal_term_months": null,
+    ///     "notice_period_days": null,
+    ///     "owner_id": null,
+    ///     "metadata": null
     ///   }
     /// }
     /// ```
@@ -707,6 +718,7 @@ impl<'a> ContractsApi<'a> {
         document_id: S,
         body: &UpdateContractBody,
     ) -> Result<DocumentContractDetails> {
+        validate_value(body.value)?;
         let path = self.contract_path(document_id.as_ref(), &[])?;
         let request = self.http.request(Method::PUT, &path)?.json(body);
         self.http.send_envelope(request).await
@@ -742,9 +754,28 @@ impl<'a> ContractsApi<'a> {
     ///         "relation_type": "amendment",
     ///         "number": 1,
     ///         "status": "applied",
-    ///         "document_status": "certificated"
+    ///         "document_status": "certificated",
+    ///         "apply_error": null,
+    ///         "currency": null,
+    ///         "terms": null,
+    ///         "changes": null,
+    ///         "applied_at": null,
+    ///         "created_at": "2026-10-23T12:00:00Z",
+    ///         "updated_at": "2026-10-23T12:00:00Z"
     ///       }
-    ///     ]
+    ///     ],
+    ///     "counterparty_name": null,
+    ///     "counterparty_taxpayer_id": null,
+    ///     "value": null,
+    ///     "currency": null,
+    ///     "start_date": null,
+    ///     "end_date": null,
+    ///     "renewal_term_months": null,
+    ///     "notice_period_days": null,
+    ///     "owner_id": null,
+    ///     "metadata": null,
+    ///     "created_at": "2026-10-23T12:00:00Z",
+    ///     "updated_at": "2026-10-23T12:00:00Z"
     ///   }
     /// }
     /// ```
@@ -765,7 +796,36 @@ impl<'a> ContractsApi<'a> {
     /// # Response payload
     ///
     /// ```json
-    /// {"status":200,"message":"","data":{"resource":"document_contract","document_id":"root","status":"active","document":{"id":"root","name":"Contract.pdf","status":"certificated"},"amendments":[]}}
+    /// {
+    ///   "status": 200,
+    ///   "message": "",
+    ///   "data": {
+    ///     "resource": "document_contract",
+    ///     "document_id": "root",
+    ///     "status": "active",
+    ///     "document": {
+    ///       "id": "root",
+    ///       "name": "Contract.pdf",
+    ///       "status": "certificated"
+    ///     },
+    ///     "amendments": [],
+    ///     "counterparty_name": null,
+    ///     "counterparty_taxpayer_id": null,
+    ///     "value": null,
+    ///     "currency": null,
+    ///     "start_date": null,
+    ///     "end_date": null,
+    ///     "auto_renew": false,
+    ///     "renewal_term_months": null,
+    ///     "notice_period_days": null,
+    ///     "term": 1,
+    ///     "owner_id": null,
+    ///     "metadata": null,
+    ///     "external_references": [],
+    ///     "created_at": "2026-10-23T12:00:00Z",
+    ///     "updated_at": "2026-10-23T12:00:00Z"
+    ///   }
+    /// }
     /// ```
     pub async fn related_with_document<S: AsRef<str>>(
         &self,
@@ -805,7 +865,15 @@ impl<'a> ContractsApi<'a> {
     ///     "auto_renew": true,
     ///     "term": 2,
     ///     "external_references": [],
-    ///     "updated_at": "2027-10-15T09:30:00Z"
+    ///     "updated_at": "2027-10-15T09:30:00Z",
+    ///     "counterparty_name": null,
+    ///     "counterparty_taxpayer_id": null,
+    ///     "start_date": null,
+    ///     "renewal_term_months": null,
+    ///     "notice_period_days": null,
+    ///     "owner_id": null,
+    ///     "metadata": null,
+    ///     "created_at": "2026-10-23T12:00:00Z"
     ///   }
     /// }
     /// ```
@@ -814,6 +882,7 @@ impl<'a> ContractsApi<'a> {
         document_id: S,
         body: &RenewContractBody,
     ) -> Result<DocumentContract> {
+        validate_value(body.value)?;
         if body.end_date.is_none() && body.term.is_none() {
             return Err(Error::Validation(
                 "a contract renewal requires the current term or a new end date".into(),
@@ -856,7 +925,14 @@ impl<'a> ContractsApi<'a> {
     ///     "auto_renew": true,
     ///     "term": 1,
     ///     "external_references": [],
-    ///     "updated_at": "2027-03-02T14:00:00Z"
+    ///     "updated_at": "2027-03-02T14:00:00Z",
+    ///     "counterparty_taxpayer_id": null,
+    ///     "start_date": null,
+    ///     "renewal_term_months": null,
+    ///     "notice_period_days": null,
+    ///     "owner_id": null,
+    ///     "metadata": null,
+    ///     "created_at": "2026-10-23T12:00:00Z"
     ///   }
     /// }
     /// ```
@@ -881,4 +957,13 @@ impl<'a> ContractsApi<'a> {
         segments.extend_from_slice(suffix);
         self.http.path(&segments)
     }
+}
+
+fn validate_value(value: Option<Option<f64>>) -> Result<()> {
+    if value.flatten().is_some_and(|value| !value.is_finite()) {
+        return Err(Error::Validation(
+            "contract value must be finite; use clear_value to send null".into(),
+        ));
+    }
+    Ok(())
 }

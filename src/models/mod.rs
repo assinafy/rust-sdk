@@ -25,6 +25,7 @@ pub mod envelope;
 pub mod field;
 pub mod identity;
 pub mod oauth;
+pub mod scheduled_send;
 pub mod signer;
 pub mod tag;
 pub mod template;
@@ -43,6 +44,7 @@ pub use assignment::{
     ResendCostEstimate, ResendNotificationResult, SignDocumentItem, SigningUrl, VerificationMethod,
     WhatsAppButton, WhatsAppNotification,
 };
+pub use assignment::{DocumentSignerCapacity, SignerCapacity, SignerNotificationHistory};
 pub use contract::{
     ContractAmendmentStatus, ContractExternalReference, ContractRelationType, ContractStatus,
     DocumentContract, DocumentContractAmendment, DocumentContractDetails,
@@ -64,6 +66,7 @@ pub use identity::{
     IdentityVerificationStatus, SignerIdentityReview,
 };
 pub use oauth::{AuthorizationServerMetadata, ProtectedResourceMetadata, TokenResponse, UserInfo};
+pub use scheduled_send::{ScheduledSend, ScheduledSendStatus, ScheduledSendType};
 pub use signer::{CertifiedCopyResult, Signer, SignerSelf, SignerType};
 pub use tag::Tag;
 pub use template::{

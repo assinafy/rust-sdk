@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 pub enum AssignmentMethod {
     /// Signers are notified and sign remotely.
     Virtual,
-    /// Signers sign in-person on the document owner's device.
+    /// Signers fill fields placed on document pages.
     Collect,
 }
 
@@ -146,6 +146,87 @@ pub struct NotificationHistoryEntry {
     /// Timestamp the notification failed (when status is `Failed`).
     #[serde(default)]
     pub failed_at: Option<String>,
+    /// First delivery time, included by the document notification-history route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_at: Option<String>,
+    /// First open/click or reported WhatsApp read; a hint, not proof of reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opened_at: Option<String>,
+}
+
+/// Notification history for one signer of a document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SignerNotificationHistory {
+    /// Signer identifier.
+    pub signer_id: String,
+    /// Delivery records, including delivery and open timestamps when available.
+    pub notification_history: Vec<NotificationHistoryEntry>,
+}
+
+/// Capacity in which the sender designates a signer on the certificate page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum SignerCapacity {
+    /// Plain signing, the default.
+    Sign,
+    /// Approval.
+    Approve,
+    /// Acknowledgement.
+    Acknowledge,
+    /// Party to the document.
+    Party,
+    /// Witness designated by the sender.
+    Witness,
+    /// Intervening party.
+    Intervening,
+    /// Receipt.
+    Receipt,
+    /// Issuer, endorser or guarantor.
+    IssuerEndorserGuarantor,
+    /// Issuer, endorser, guarantor or surety.
+    IssuerEndorserGuarantorSurety,
+    /// Surety.
+    Surety,
+    /// Party and surety.
+    PartySurety,
+    /// Joint debtor.
+    JointDebtor,
+    /// Party and joint debtor.
+    PartyJointDebtor,
+    /// Contracting party.
+    ContractingParty,
+    /// Contracted party.
+    ContractedParty,
+    /// Landlord.
+    Landlord,
+    /// Tenant.
+    Tenant,
+    /// Buyer.
+    Buyer,
+    /// Seller.
+    Seller,
+    /// Attorney in fact.
+    AttorneyInFact,
+    /// Legal representative.
+    LegalRepresentative,
+    /// Employer.
+    Employer,
+    /// Employee.
+    Employee,
+    /// A future server value, retained unchanged.
+    #[serde(untagged)]
+    Other(String),
+}
+
+/// The capacity assigned to one signer, in assignment signer order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct DocumentSignerCapacity {
+    /// Signer identifier.
+    pub signer_id: String,
+    /// Capacity designated when the assignment was created.
+    pub sign_as: SignerCapacity,
 }
 
 /// Signer assigned to an assignment.
@@ -476,19 +557,43 @@ pub struct WhatsAppNotification {
 }
 
 /// Button embedded in a WhatsApp notification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct WhatsAppButton {
     /// Button text.
     pub text: String,
-    /// Button URL, when present.
+    /// Button URL, when present. May contain a signer credential; do not log it.
     #[serde(default)]
     pub url: Option<String>,
+}
+
+impl fmt::Debug for WhatsAppButton {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WhatsAppButton")
+            .field("text", &self.text)
+            .field("url", &self.url.as_ref().map(|_| "**redacted**"))
+            .finish()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whatsapp_button_debug_redacts_signer_credentials() {
+        let button: WhatsAppButton = serde_json::from_value(serde_json::json!({
+            "text": "Sign document",
+            "url": "https://example.invalid/sign?access_code=secret-sentinel"
+        }))
+        .unwrap();
+        assert!(!format!("{button:?}").contains("secret-sentinel"));
+        assert!(
+            serde_json::to_string(&button)
+                .unwrap()
+                .contains("secret-sentinel")
+        );
+    }
 
     #[test]
     fn assignment_signer_accepts_nullable_notification_history() {

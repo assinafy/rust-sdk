@@ -33,7 +33,11 @@ pub struct CreateTagBody {
     /// Tag name (1–64 chars, trimmed; case-insensitively unique).
     pub name: String,
     /// 6-character hex color (with or without leading `#`), or `null`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::deserialize_nullable"
+    )]
     pub color: Option<Option<String>>,
 }
 
@@ -75,7 +79,11 @@ pub struct UpdateTagBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// New color. Omit to leave unchanged; pass `null` to clear.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::deserialize_nullable"
+    )]
     pub color: Option<Option<String>>,
 }
 
